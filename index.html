@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>테니스 클럽 관리</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="config.js"></script>
+</head>
+<body>
+  <div id="app">
+    <!-- 로딩 화면 (user.xlsx 자동 로드) -->
+    <section id="screen-load" class="screen active">
+      <header class="app-header">
+        <h1>테니스 클럽 관리</h1>
+      </header>
+      <div class="load-card">
+        <p id="data-source-msg" class="data-source-msg" style="display:none; margin-bottom:8px; font-size:0.9rem;"></p>
+        <p id="load-message">초기화 중...</p>
+        <p class="hint">매 페이지 로드 시 <strong>서버(DB)</strong>에서 상태를 불러와 공유합니다. 같은 서버에 접속한 기기끼리 데이터가 동기화됩니다.</p>
+        <p class="hint">처음 실행 시 <strong>user.txt</strong>를 읽어 저장합니다. 형식: 이름\t그레이드\t점수 (탭 구분)</p>
+        <div id="load-status" class="load-status"></div>
+        <div id="file-input-container" style="margin-top:12px; display:none;">
+          <input type="file" id="user-file-input" accept=".txt" style="display:none;" />
+          <button type="button" class="btn secondary" id="btn-select-file" style="width:100%;">user.txt 파일 선택</button>
+        </div>
+        <button type="button" class="btn secondary" id="btn-update-users" style="margin-top:12px; display:none;">user.txt에서 사용자 정보 업데이트</button>
+        <button type="button" class="btn secondary" id="btn-refetch-server" style="margin-top:8px; display:none;">서버(DB)에서 다시 불러오기</button>
+        <button type="button" class="btn secondary" id="btn-upload-local" style="margin-top:8px; display:none;">로컬 데이터 서버 업로드</button>
+        <button type="button" class="btn secondary" id="btn-download-state" style="margin-top:8px;">상태 파일로 저장 (state.json 다운로드)</button>
+      </div>
+    </section>
+
+    <!-- 달력 화면 -->
+    <section id="screen-calendar" class="screen">
+      <header class="app-header">
+        <button type="button" class="btn icon" id="btn-back-calendar" aria-label="뒤로">←</button>
+        <h1>달력</h1>
+      </header>
+      <div class="calendar-toolbar">
+        <button type="button" class="btn secondary" id="btn-prev-month">◀</button>
+        <span id="current-month-label"></span>
+        <button type="button" class="btn secondary" id="btn-next-month">▶</button>
+      </div>
+      <div class="start-time-row">
+        <label>경기 시작시간</label>
+        <select id="month-start-time"></select>
+      </div>
+      <div id="calendar-grid" class="calendar-grid"></div>
+    </section>
+
+    <!-- 해당 날짜 화면: 참여자 리스트 + 참여/체크인/체크아웃 -->
+    <section id="screen-day" class="screen">
+      <header class="app-header">
+        <button type="button" class="btn icon" id="btn-back-day" aria-label="뒤로">←</button>
+        <h1 id="day-title">날짜</h1>
+      </header>
+      <div class="day-toolbar">
+        <div class="start-time-row">
+          <label>당일 시작시간</label>
+          <select id="day-start-time"></select>
+        </div>
+      </div>
+      <div class="participants-section">
+        <h2>참여자</h2>
+        <ul id="participant-list" class="participant-list"></ul>
+        <div class="day-actions">
+          <button type="button" class="btn primary" id="btn-go-bracket">대진표 작성</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 대진표 + 경기 결과 화면 -->
+    <section id="screen-bracket" class="screen">
+      <header class="app-header">
+        <button type="button" class="btn icon" id="btn-back-bracket" aria-label="뒤로">←</button>
+        <h1 id="bracket-title">대진표</h1>
+      </header>
+      <div class="bracket-games" id="bracket-games"></div>
+      <div class="bracket-actions">
+        <p id="register-results-hint" class="hint" style="margin:0 0 8px 0; font-size:0.85rem;"></p>
+        <button type="button" class="btn primary" id="btn-register-results" disabled>결과 등록</button>
+      </div>
+    </section>
+
+    <!-- 사용자별 승률 / 상대별 승률 화면 -->
+    <section id="screen-stats" class="screen">
+      <header class="app-header">
+        <button type="button" class="btn icon" id="btn-back-stats" aria-label="뒤로">←</button>
+        <h1>순위 및 승률</h1>
+      </header>
+      <div class="stats-tabs">
+        <button type="button" class="tab active" data-tab="overall">전체 순위</button>
+        <button type="button" class="tab" data-tab="vs">상대별 승률</button>
+      </div>
+      <div id="stats-overall" class="stats-panel active">
+        <p class="hint">전체 인원의 승패수·승률입니다. 개인을 클릭하면 해당 개인과 전체 인원 각각과의 대전수·승패수·승률을 볼 수 있습니다.</p>
+        <ul id="rank-list" class="rank-list"></ul>
+      </div>
+      <div id="stats-vs" class="stats-panel">
+        <div class="vs-select">
+          <label>기준 사용자</label>
+          <select id="vs-user-select"></select>
+        </div>
+        <ul id="vs-list" class="vs-list"></ul>
+      </div>
+    </section>
+
+    <!-- 회원관리 화면 -->
+    <section id="screen-member" class="screen">
+      <header class="app-header">
+        <button type="button" class="btn icon" id="btn-back-member" aria-label="뒤로">←</button>
+        <h1>회원관리</h1>
+      </header>
+      <div id="member-password" class="member-password">
+        <div class="load-card">
+          <p>암호를 입력하세요</p>
+          <input type="password" id="member-password-input" class="password-input" placeholder="암호 입력" />
+          <p id="member-password-error" class="error-message" style="display:none; color:var(--danger); margin-top:8px;"></p>
+          <button type="button" class="btn primary" id="btn-member-login" style="margin-top:12px; width:100%;">확인</button>
+        </div>
+      </div>
+      <div id="member-list" class="member-list" style="display:none;">
+        <div style="padding:20px; border-bottom:1px solid var(--border);">
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button type="button" class="btn primary" id="btn-member-add" style="flex:1; min-width:100px;">회원 추가</button>
+            <button type="button" class="btn secondary" id="btn-member-edit" style="flex:1; min-width:100px;">회원 수정</button>
+            <button type="button" class="btn secondary" id="btn-member-delete" style="flex:1; min-width:100px; background-color:var(--danger); color:white;">회원 삭제</button>
+          </div>
+        </div>
+        <ul id="member-user-list" class="rank-list"></ul>
+        <div style="padding:20px; border-top:1px solid var(--border); margin-top:20px;">
+          <h3 style="margin-bottom:12px; color:var(--text);">데이터 관리</h3>
+          <button type="button" class="btn secondary" id="btn-clear-matches" style="width:100%; margin-bottom:8px; background-color:var(--danger); color:white;">모든 경기 데이터 삭제 (주의!)</button>
+          <button type="button" class="btn secondary" id="btn-clear-storage" style="width:100%; background-color:var(--danger); color:white;">저장된 데이터 초기화 (주의!)</button>
+        </div>
+      </div>
+      <div id="member-form" class="member-form" style="display:none;">
+        <div class="load-card">
+          <h2 id="member-form-title">회원 추가</h2>
+          <div style="margin-top:16px;">
+            <div style="margin-bottom:12px;">
+              <label style="display:block; margin-bottom:4px; font-weight:600;">이름</label>
+              <input type="text" id="member-form-name" class="password-input" placeholder="이름 입력" />
+            </div>
+            <div style="margin-bottom:12px;">
+              <label style="display:block; margin-bottom:4px; font-weight:600;">그레이드</label>
+              <select id="member-form-grade" class="password-input" style="padding:12px;">
+                <option value="A">A</option>
+                <option value="B">B</option>
+                <option value="C">C</option>
+              </select>
+            </div>
+            <div style="margin-bottom:12px;">
+              <label style="display:block; margin-bottom:4px; font-weight:600;">베이스 점수</label>
+              <input type="number" id="member-form-score" class="password-input" placeholder="점수 입력" value="0" />
+            </div>
+          </div>
+          <div style="display:flex; gap:8px; margin-top:16px;">
+            <button type="button" class="btn primary" id="btn-member-save" style="flex:1;">저장</button>
+            <button type="button" class="btn secondary" id="btn-member-cancel" style="flex:1;">취소</button>
+          </div>
+        </div>
+      </div>
+      <div id="member-detail" class="member-detail" style="display:none;">
+        <div class="load-card">
+          <h2 id="member-detail-name"></h2>
+          <div style="margin-top:16px;">
+            <p><strong>그레이드:</strong> <span id="member-detail-grade"></span></p>
+            <p><strong>베이스 점수:</strong> <span id="member-detail-base-score"></span>점</p>
+            <p><strong>경기 점수:</strong> <span id="member-detail-match-score"></span>점</p>
+            <p><strong>총 점수:</strong> <span id="member-detail-total-score"></span>점</p>
+            <p><strong>승:</strong> <span id="member-detail-wins"></span>승</p>
+            <p><strong>패:</strong> <span id="member-detail-losses"></span>패</p>
+            <p><strong>승률:</strong> <span id="member-detail-rate"></span></p>
+          </div>
+          <button type="button" class="btn secondary" id="btn-member-back-list" style="margin-top:16px; width:100%;">목록으로</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 상단 네비게이션 (달력/통계/회원관리) -->
+    <nav class="bottom-nav" id="bottom-nav">
+      <button type="button" class="nav-item active" data-screen="calendar">달력</button>
+      <button type="button" class="nav-item" data-screen="stats">순위/승률</button>
+      <button type="button" class="nav-item" data-screen="member">회원관리</button>
+    </nav>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
