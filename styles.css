@@ -399,6 +399,22 @@ body {
   margin: 2px 0;
 }
 
+.team-box[data-team-group]::before {
+  content: attr(data-team-group);
+  display: block;
+  font-size: 0.65rem;
+  color: var(--primary);
+  margin-bottom: 6px;
+}
+
+.team-box::after {
+  content: '합산 ' attr(data-team-score) '점';
+  display: block;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: 8px;
+}
+
 .team-box .dup-tag {
   position: absolute;
   top: 6px;

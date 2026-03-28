@@ -2,3 +2,13 @@ node_modules/
 .env
 *.log
 .DS_Store
+
+# 민감 데이터 / 런타임 생성 파일
+data/
+user.txt
+
+# 마이그레이션 스크립트 (필요 시에만 별도 실행)
+migrate-db.sh
+
+# PM2 배포 설정 (크레덴셜 포함 — 각 서버에서 직접 생성)
+ecosystem.config.js

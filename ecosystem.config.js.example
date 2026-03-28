@@ -1,0 +1,30 @@
+// -------------------------------------------------------
+// PM2 배포 설정 템플릿
+// 사용법:
+//   1. 이 파일을 ecosystem.config.js 로 복사
+//   2. 실제 DB 정보 입력
+//   3. pm2 start ecosystem.config.js
+//
+// ※ ecosystem.config.js 는 .gitignore 에 포함되어 있습니다.
+//    절대 git 에 커밋하지 마세요.
+// -------------------------------------------------------
+module.exports = {
+  apps: [
+    {
+      name: 'tennis-club',
+      script: 'server.js',
+      instances: 1,
+      autorestart: true,
+      watch: false,
+      env: {
+        NODE_ENV: 'production',
+        PORT: 3000,
+        DB_HOST: '192.168.xx.xx',   // 실제 MariaDB 호스트로 변경
+        DB_PORT: 3306,
+        DB_USER: 'root',            // DB 사용자
+        DB_PASSWORD: 'your_password_here', // DB 비밀번호
+        DB_NAME: 'tennis_club'
+      }
+    }
+  ]
+};

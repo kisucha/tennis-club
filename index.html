@@ -34,7 +34,7 @@
     <!-- 달력 화면 -->
     <section id="screen-calendar" class="screen">
       <header class="app-header">
-        <button type="button" class="btn icon" id="btn-back-calendar" aria-label="뒤로">←</button>
+        <button type="button" class="btn icon" id="btn-back-calendar" aria-label="뒤로" style="display:none;">←</button>
         <h1>달력</h1>
       </header>
       <div class="calendar-toolbar">
@@ -144,14 +144,6 @@
               <input type="text" id="member-form-name" class="password-input" placeholder="이름 입력" />
             </div>
             <div style="margin-bottom:12px;">
-              <label style="display:block; margin-bottom:4px; font-weight:600;">그레이드</label>
-              <select id="member-form-grade" class="password-input" style="padding:12px;">
-                <option value="A">A</option>
-                <option value="B">B</option>
-                <option value="C">C</option>
-              </select>
-            </div>
-            <div style="margin-bottom:12px;">
               <label style="display:block; margin-bottom:4px; font-weight:600;">베이스 점수</label>
               <input type="number" id="member-form-score" class="password-input" placeholder="점수 입력" value="0" />
             </div>
@@ -166,7 +158,6 @@
         <div class="load-card">
           <h2 id="member-detail-name"></h2>
           <div style="margin-top:16px;">
-            <p><strong>그레이드:</strong> <span id="member-detail-grade"></span></p>
             <p><strong>베이스 점수:</strong> <span id="member-detail-base-score"></span>점</p>
             <p><strong>경기 점수:</strong> <span id="member-detail-match-score"></span>점</p>
             <p><strong>총 점수:</strong> <span id="member-detail-total-score"></span>점</p>

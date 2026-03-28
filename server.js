@@ -5,10 +5,10 @@ var mariadb = require('mariadb');
 var app = express();
 var PORT = process.env.PORT || 3000;
 
-var DB_HOST = process.env.DB_HOST || '192.168.20.27';
+var DB_HOST = process.env.DB_HOST || 'localhost';
 var DB_PORT = parseInt(process.env.DB_PORT || '3306', 10);
 var DB_USER = process.env.DB_USER || 'root';
-var DB_PASSWORD = process.env.DB_PASSWORD || '740923aa';
+var DB_PASSWORD = process.env.DB_PASSWORD || '';
 var DB_NAME = process.env.DB_NAME || 'tennis_club';
 
 var DEFAULT_STATE = {

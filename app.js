@@ -236,6 +236,46 @@
     }
   }
 
+  function computeTeamScore(team) {
+    if (!Array.isArray(team) || team.length === 0) return 0;
+    return team.reduce(function (sum, id) {
+      var value = 0;
+      if (state.scores && typeof state.scores[id] === 'number') {
+        value = state.scores[id];
+      } else if (state.baseScores && typeof state.baseScores[id] === 'number') {
+        value = state.baseScores[id];
+      }
+      return sum + (value || 0);
+    }, 0);
+  }
+
+  function determineTeamGroup(team, groupAssignments) {
+    if (!Array.isArray(team) || team.length === 0) return 'UNASSIGNED';
+    var groups = [];
+    team.forEach(function (id) {
+      if (groupAssignments && groupAssignments[id]) {
+        groups.push(groupAssignments[id]);
+      }
+    });
+    var unique = [];
+    groups.forEach(function (g) {
+      if (unique.indexOf(g) === -1) unique.push(g);
+    });
+    if (unique.length === 0) return 'UNASSIGNED';
+    if (unique.length === 1) return unique[0];
+    return 'MIXED';
+  }
+
+  function formatGroupLabel(groupKey) {
+    if (!groupKey) return '';
+    switch (groupKey.toUpperCase()) {
+      case 'A': return 'A그룹';
+      case 'B': return 'B그룹';
+      case 'MIXED': return '혼합';
+      default: return '';
+    }
+  }
+
   function rebuildHeadToHeadFromEvents() {
     // 기존 경기 결과를 기반으로 headToHead와 matchWins 재구성
     console.log('rebuildHeadToHeadFromEvents 시작');
@@ -606,12 +646,8 @@
     return { team1: best[0], team2: best[1] };
   }
 
-  function buildBracketForGame(dateKey, gameIndex, sameDayTeammates) {
+  function buildBracketForGame(dateKey, gameIndex, sameDayTeammates, prevWaiting) {
     var participants = getParticipantsForGame(dateKey, gameIndex);
-    var userById = {};
-    state.users.forEach(function (u) {
-      userById[u.id] = u;
-    });
 
     if (participants.length < 4) {
       return { matches: [], waiting: participants.map(function (p) { return p.userId; }) };
@@ -622,99 +658,180 @@
     var maxTries = 120;
     var best = null;
     var bestBad = 999;
-    var preferredOrder = (gameIndex > GAMES_BY_GRADE) ? [2, 0, 1] : undefined;
-
-    function buildOnce() {
-      var indices = participants.map(function (_, i) { return i; });
-      indices = shuffle(indices);
-      var restIndices = indices.slice(0, waitingCount);
-      var poolIndices = indices.slice(waitingCount);
-      var waiting = restIndices.map(function (i) { return participants[i].userId; });
-      var poolParticipants = poolIndices.map(function (i) { return participants[i]; });
-
-      var ordered = poolParticipants.map(function (p) {
-        var u = userById[p.userId];
-        var grade = (u && u.grade) ? u.grade : 'C';
-        var score = (state.scores && state.scores[p.userId] !== undefined) ? state.scores[p.userId] : (state.baseScores && state.baseScores[p.userId]) || 0;
-        return { userId: p.userId, grade: grade, score: score };
-      });
-
-      if (gameIndex <= GAMES_BY_GRADE) {
-        // 1~3게임: 그레이드 순 유지, 같은 그레이드 내에서는 무작위
-        var bucketA = [];
-        var bucketB = [];
-        var bucketC = [];
-        var bucketOther = [];
-        ordered.forEach(function (p) {
-          if (p.grade === 'A') bucketA.push(p);
-          else if (p.grade === 'B') bucketB.push(p);
-          else if (p.grade === 'C') bucketC.push(p);
-          else bucketOther.push(p);
-        });
-        ordered = []
-          .concat(shuffle(bucketA), shuffle(bucketB), shuffle(bucketC), shuffle(bucketOther));
-      } else {
-        // 4~5게임: 점수 내림차순, 동점은 무작위
-        ordered.forEach(function (p) { p._rnd = Math.random(); });
-        ordered.sort(function (a, b) {
-          var s = (b.score || 0) - (a.score || 0);
-          if (s !== 0) return s;
-          return a._rnd - b._rnd;
-        });
-      }
-
-      var available = ordered.map(function (p) { return p.userId; });
-      var matches = [];
-      var i = 0;
-      var localSameDay = Object.assign({}, sameDayTeammates);
-      var badPairs = 0;
-
-      while (i + 4 <= available.length) {
-        var four = available.slice(i, i + 4);
-        i += 4;
-        var orderForFour = preferredOrder;
-        if (gameIndex <= GAMES_BY_GRADE) {
-          var gradeCount = {};
-          four.forEach(function (id) {
-            var g = (userById[id] && userById[id].grade) ? userById[id].grade : 'C';
-            gradeCount[g] = (gradeCount[g] || 0) + 1;
-          });
-          var counts = Object.keys(gradeCount).map(function (g) { return gradeCount[g]; }).sort(function (a, b) { return b - a; });
-          // 무조건 4명이고 같은 그레이드 2명씩(두 그레이드 각 2명)일 때만 교차 적용 → (A,C)vs(A,C) 우선
-          if (counts.length === 2 && counts[0] === 2 && counts[1] === 2) {
-            orderForFour = [1, 2, 0];
-          }
-        }
-        var spl = splitIntoTeams(four, localSameDay, orderForFour);
-        var team1 = spl.team1;
-        var team2 = spl.team2;
-        matches.push({ team1: team1, team2: team2, winner: null });
-
-        var k1 = pairKey(team1[0], team1[1]);
-        var k2 = pairKey(team2[0], team2[1]);
-        if (sameDayTeammates[k1]) badPairs++;
-        if (sameDayTeammates[k2]) badPairs++;
-        localSameDay[k1] = true;
-        localSameDay[k2] = true;
-      }
-
-      return { matches: matches, waiting: waiting, badPairs: badPairs };
+    var groupAssignments = {};
+    function annotateMatch(match) {
+      match.groupInfo = {
+        team1Group: determineTeamGroup(match.team1, groupAssignments),
+        team2Group: determineTeamGroup(match.team2, groupAssignments)
+      };
+      return match;
+    }
+    function createMatch(team1, team2) {
+      return annotateMatch({ team1: team1, team2: team2, winner: null });
     }
 
-    for (var t = 0; t < maxTries; t++) {
-      var attempt = buildOnce();
-      if (!best || attempt.badPairs < bestBad) {
-        best = attempt;
-        bestBad = attempt.badPairs;
+    // 점수 포함한 참여자 목록 구성
+    var enriched = participants.map(function (p) {
+      var score = (state.scores && state.scores[p.userId] !== undefined) ? state.scores[p.userId] : (state.baseScores && state.baseScores[p.userId]) || 0;
+      return { userId: p.userId, score: score };
+    });
+
+    if (gameIndex <= GAMES_BY_GRADE) {
+      // 1~3게임: 점수순으로 절반을 A그룹(상위), 나머지를 B그룹(하위)으로 나눠 대진 구성
+      var sorted = enriched.slice().sort(function (a, b) { return b.score - a.score; });
+      var mid = Math.ceil(sorted.length / 2);
+      var groupA = sorted.slice(0, mid);  // 상위 절반
+      var groupB = sorted.slice(mid);     // 하위 절반
+      groupA.forEach(function (p) { groupAssignments[p.userId] = 'A'; });
+      groupB.forEach(function (p) { groupAssignments[p.userId] = 'B'; });
+
+      function buildOnceAB() {
+        // 전체 인원에서 랜덤하게 대기자 차출
+        var shuffledAll = shuffle(enriched.slice());
+        var waiters = shuffledAll.slice(0, waitingCount).map(function (p) { return p.userId; });
+        var waiterSet = {};
+        waiters.forEach(function (id) { waiterSet[id] = true; });
+
+        // 대기자를 제외한 A, B 그룹 (순서 섞기)
+        var activeA = shuffle(groupA.filter(function (p) { return !waiterSet[p.userId]; }));
+        var activeB = shuffle(groupB.filter(function (p) { return !waiterSet[p.userId]; }));
+
+        var aPool = activeA.slice();
+        var bPool = activeB.slice();
+        var matches = [];
+        var badPairs = 0;
+        var localSameDay = Object.assign({}, sameDayTeammates);
+
+        // A그룹에서 4명씩 매치 구성
+        while (aPool.length >= 4) {
+          var four = aPool.splice(0, 4).map(function (p) { return p.userId; });
+          var spl = splitIntoTeams(four, localSameDay, undefined);
+          matches.push(createMatch(spl.team1, spl.team2));
+          var k1 = pairKey(spl.team1[0], spl.team1[1]);
+          var k2 = pairKey(spl.team2[0], spl.team2[1]);
+          if (sameDayTeammates[k1]) badPairs++;
+          if (sameDayTeammates[k2]) badPairs++;
+          localSameDay[k1] = true;
+          localSameDay[k2] = true;
+        }
+
+        // A그룹 잔여(1~3명)가 있으면 B그룹에서 보충해 4명 구성
+        if (aPool.length > 0 && aPool.length < 4) {
+          var needed = 4 - aPool.length;
+          if (bPool.length >= needed) {
+            var fromB = bPool.splice(0, needed);
+            var four = shuffle(aPool.map(function (p) { return p.userId; }).concat(fromB.map(function (p) { return p.userId; })));
+            var spl = splitIntoTeams(four, localSameDay, undefined);
+            matches.push(createMatch(spl.team1, spl.team2));
+            var k1 = pairKey(spl.team1[0], spl.team1[1]);
+            var k2 = pairKey(spl.team2[0], spl.team2[1]);
+            if (sameDayTeammates[k1]) badPairs++;
+            if (sameDayTeammates[k2]) badPairs++;
+            localSameDay[k1] = true;
+            localSameDay[k2] = true;
+            aPool = [];
+          }
+        }
+
+        // B그룹 남은 인원으로 매치 구성
+        while (bPool.length >= 4) {
+          var four = bPool.splice(0, 4).map(function (p) { return p.userId; });
+          var spl = splitIntoTeams(four, localSameDay, undefined);
+          matches.push(createMatch(spl.team1, spl.team2));
+          var k1 = pairKey(spl.team1[0], spl.team1[1]);
+          var k2 = pairKey(spl.team2[0], spl.team2[1]);
+          if (sameDayTeammates[k1]) badPairs++;
+          if (sameDayTeammates[k2]) badPairs++;
+          localSameDay[k1] = true;
+          localSameDay[k2] = true;
+        }
+
+        return { matches: matches, waiting: waiters, badPairs: badPairs };
       }
-      if (bestBad === 0) break;
+
+      for (var t = 0; t < maxTries; t++) {
+        var attempt = buildOnceAB();
+        if (!best || attempt.badPairs < bestBad) {
+          best = attempt;
+          bestBad = attempt.badPairs;
+        }
+        if (bestBad === 0) break;
+      }
+
+    } else if (gameIndex === GAMES_BY_GRADE + 1) {
+      // 4번째 게임: 점수 내림차순 정렬 후 [1위+꼴찌] vs [2위+2꼴찌], [3위+3꼴찌] vs [4위+4꼴찌] ... 방식
+      var sorted4 = enriched.slice().sort(function (a, b) {
+        var s = b.score - a.score;
+        return s !== 0 ? s : (Math.random() - 0.5);
+      });
+      var activeCount4 = n - waitingCount;
+      // 하위 waitingCount명 대기
+      var waiters4 = sorted4.slice(activeCount4).map(function (p) { return p.userId; });
+      var active4 = sorted4.slice(0, activeCount4);
+      var matches4 = [];
+      var left4 = 0, right4 = activeCount4 - 1;
+      while (left4 < right4) {
+        // [1위+꼴찌] vs [2위+2꼴찌] 순으로 팀 구성
+        matches4.push(createMatch(
+          [active4[left4].userId, active4[right4].userId],
+          [active4[left4 + 1].userId, active4[right4 - 1].userId]
+        ));
+        left4 += 2;
+        right4 -= 2;
+      }
+      best = { matches: matches4, waiting: waiters4 };
+
+    } else {
+      // 5번째 게임: 4번째 대기인원 복귀 + shifted pairing [1위+2꼴찌] vs [2위+3꼴찌] ...
+      // 마지막 매치에 제외했던 꼴찌 추가 → 전원 출전 보장
+      var game4WaiterSet = {};
+      (prevWaiting || []).forEach(function (id) { game4WaiterSet[id] = true; });
+
+      var sorted5 = enriched.slice().sort(function (a, b) {
+        var s = b.score - a.score;
+        return s !== 0 ? s : (Math.random() - 0.5);
+      });
+
+      // 4번째 게임 출전 인원 중 하위 waitingCount명이 5번째 게임 대기
+      var game4Active5 = sorted5.filter(function (p) { return !game4WaiterSet[p.userId]; });
+      var game5WaiterCount = waitingCount;
+      var game5WaitersArr = game4Active5.length >= game5WaiterCount
+        ? game4Active5.slice(game4Active5.length - game5WaiterCount).map(function (p) { return p.userId; })
+        : game4Active5.map(function (p) { return p.userId; });
+      var game5WaiterSet = {};
+      game5WaitersArr.forEach(function (id) { game5WaiterSet[id] = true; });
+
+      // 5번째 게임 출전 = 전체 중 game5 대기 제외 (4번째 대기인원은 포함)
+      var game5Active = sorted5.filter(function (p) { return !game5WaiterSet[p.userId]; });
+      var M5 = game5Active.length;
+      var matches5 = [];
+
+      if (M5 >= 4) {
+        // right = M5-2: 꼴찌(M5-1)는 마지막 매치에 별도 배정
+        var left5 = 0, right5 = M5 - 2;
+        while (left5 + 3 <= right5) {
+          matches5.push(createMatch(
+            [game5Active[left5].userId, game5Active[right5].userId],
+            [game5Active[left5 + 1].userId, game5Active[right5 - 1].userId]
+          ));
+          left5 += 2;
+          right5 -= 2;
+        }
+        // 마지막 매치: 남은 3명 + 꼴찌(game5Active[M5-1])
+        matches5.push(createMatch(
+          [game5Active[left5].userId, game5Active[right5].userId],
+          [game5Active[left5 + 1].userId, game5Active[M5 - 1].userId]
+        ));
+      }
+
+      best = { matches: matches5, waiting: game5WaitersArr };
     }
 
     if (!best) {
       return { matches: [], waiting: participants.map(function (p) { return p.userId; }) };
     }
 
-    // 최종 선택된 매치에 대해서만 같은 팀 페어 기록
+    // 최종 선택된 매치의 팀 페어를 기록 (이후 게임 동일팀 방지)
     (best.matches || []).forEach(function (m) {
       if (!m || !m.team1 || !m.team2) return;
       var k1 = pairKey(m.team1[0], m.team1[1]);
@@ -759,14 +876,18 @@
     });
 
     const result = [];
+    var prevGameWaiting = null;
     for (let g = 1; g <= TOTAL_GAMES; g++) {
-      const br = buildBracketForGame(dateKey, g, sameDayTeammates);
+      const br = buildBracketForGame(dateKey, g, sameDayTeammates, prevGameWaiting);
       result.push({
         gameIndex: g,
         startTime: getGameStartTime(dateKey, g),
         matches: br.matches,
         waiting: br.waiting
       });
+      if (g === GAMES_BY_GRADE + 1) {
+        prevGameWaiting = br.waiting; // 4번째 게임 대기자 → 5번째 게임에 전달
+      }
     }
     ev.bracketSnapshot = JSON.parse(JSON.stringify(result));
     var parts = (ev.participants || []).map(function (p) {
@@ -1260,7 +1381,7 @@
     var userById = {};
     state.users.forEach(function (u) { userById[u.id] = u; });
 
-    // 참여자 리스트를 정렬: 그레이드 순 > 점수 순 > 이름 가나다 순
+    // 참여자 리스트를 정렬: 점수 순 > 이름 가나다 순
     var participantsList = ev.participants.map(function (p) {
       var u = userById[p.userId];
       if (!u) return null;
@@ -1288,7 +1409,7 @@
       var gradeSpan = document.createElement('span');
       gradeSpan.className = 'grade-tag';
       var userScore = state.scores[u.id] || 0;
-      gradeSpan.textContent = u.grade + ', ' + userScore + '점';
+      gradeSpan.textContent = userScore + '점';
       nameGrade.appendChild(gradeSpan);
 
       var checkGroup = document.createElement('div');
@@ -1471,6 +1592,10 @@
         const team1 = match.team1.map(function (id) { return userById[id] ? userById[id].name : id; }).join(' / ');
         const team2 = match.team2.map(function (id) { return userById[id] ? userById[id].name : id; }).join(' / ');
         const winner = match.winner;
+        const team1Score = computeTeamScore(match.team1);
+        const team2Score = computeTeamScore(match.team2);
+        const team1GroupLabel = formatGroupLabel((match.groupInfo && match.groupInfo.team1Group) || '');
+        const team2GroupLabel = formatGroupLabel((match.groupInfo && match.groupInfo.team2Group) || '');
         function applyWinner(w) {
           match.winner = w;
           ev.matchResults = ev.matchResults || [];
@@ -1501,6 +1626,8 @@
           dupTag1.title = '같은 날 동일 팀이 이미 구성되었습니다';
           box1.appendChild(dupTag1);
         }
+        box1.dataset.teamScore = team1Score;
+        if (team1GroupLabel) box1.dataset.teamGroup = team1GroupLabel;
         const box2 = document.createElement('div');
         box2.className = 'team-box' + (winner === 2 ? ' winner' : '');
         box2.innerHTML = '<div class="team-label">팀2</div><div class="member">' + team2.replace(/ \/ /g, '<br>') + '</div>';
@@ -1516,6 +1643,8 @@
           dupTag2.title = '같은 날 동일 팀이 이미 구성되었습니다';
           box2.appendChild(dupTag2);
         }
+        box2.dataset.teamScore = team2Score;
+        if (team2GroupLabel) box2.dataset.teamGroup = team2GroupLabel;
         matchesDiv.appendChild(box1);
         matchesDiv.appendChild(box2);
 
@@ -1592,15 +1721,18 @@
             var game = snap.find(function (g) { return g.gameIndex === ar.gameIndex; });
             if (!game || !game.matches || !game.matches[ar.matchIdx]) return;
             var m = game.matches[ar.matchIdx];
-            revertResult({ team1: m.team1, team2: m.team2, winner: ar.winner });
+            revertResult({ team1: m.team1, team2: m.team2, winner: ar.winner, scoreDelta: ar.scoreDelta });
           });
+          var appliedWithDeltas = [];
           toApply.forEach(function (r) {
             var game = snap.find(function (g) { return g.gameIndex === r.gameIndex; });
             if (!game || !game.matches || !game.matches[r.matchIdx]) return;
             var m = game.matches[r.matchIdx];
-            applyResult({ team1: m.team1, team2: m.team2, winner: r.winner });
+            var delta = applyResult({ team1: m.team1, team2: m.team2, winner: r.winner });
+            appliedWithDeltas.push({ gameIndex: r.gameIndex, matchIdx: r.matchIdx, winner: r.winner, scoreDelta: delta });
           });
-          ev.appliedMatchResults = toApply.map(function (r) { return { gameIndex: r.gameIndex, matchIdx: r.matchIdx, winner: r.winner }; });
+          ev.appliedMatchResults = appliedWithDeltas;
+          rebuildMatchScoresFromAppliedResults();
           saveState();
           showScreen('screen-stats');
           document.querySelectorAll('.stats-tabs .tab').forEach(function (t) {
@@ -1620,16 +1752,19 @@
     if (!match.winner || (match.winner !== 1 && match.winner !== 2)) return;
     const winners = match.winner === 1 ? match.team1 : match.team2;
     const losers = match.winner === 1 ? match.team2 : match.team1;
-    
+
+    // 저장된 scoreDelta 사용 (없으면 1로 폴백)
+    var delta = match.scoreDelta || 1;
+
     // 점수 되돌리기
     winners.forEach(function (id) {
-      state.matchScores[id] = (state.matchScores[id] || 0) - 1;
+      state.matchScores[id] = (state.matchScores[id] || 0) - delta;
     });
     losers.forEach(function (id) {
-      state.matchScores[id] = (state.matchScores[id] || 0) + 1;
+      state.matchScores[id] = (state.matchScores[id] || 0) + delta;
     });
     updateTotalScores();
-    
+
     // 경기당 승패 되돌리기
     winners.forEach(function (id) {
       if (state.matchWins[id]) {
@@ -1641,16 +1776,14 @@
         state.matchWins[id].losses = Math.max(0, (state.matchWins[id].losses || 0) - 1);
       }
     });
-    
+
     // 개인 대 개인 승패 되돌리기 (상대별 승률용)
     winners.forEach(function (w) {
       losers.forEach(function (l) {
-        const key = pairKey(w, l); // 정렬된 키 (작은 ID가 앞에)
+        const key = pairKey(w, l);
         const h = state.headToHead[key];
         if (!h) return;
         const [id1, id2] = key.split('::');
-        
-        // id1이 승자면 wins1 감소, id2가 승자면 wins2 감소
         if (id1 === w) {
           h.wins1 = Math.max(0, (h.wins1 || 0) - 1);
         } else if (id2 === w) {
@@ -1665,17 +1798,33 @@
     if (!match.winner || (match.winner !== 1 && match.winner !== 2)) return;
     const winners = match.winner === 1 ? match.team1 : match.team2;
     const losers = match.winner === 1 ? match.team2 : match.team1;
-    
-    // 점수 업데이트: 경기당 승자 팀 각 멤버 +1점, 패자 팀 각 멤버 -1점
+
+    // 각 팀의 현재 점수 합계 계산
+    var winnersScoreSum = winners.reduce(function (sum, id) { return sum + (state.scores[id] || 0); }, 0);
+    var losersScoreSum = losers.reduce(function (sum, id) { return sum + (state.scores[id] || 0); }, 0);
+    var diff = Math.abs(winnersScoreSum - losersScoreSum);
+
+    // 점수 변동량 결정:
+    // - 승리팀 점수합 >= 패배팀 점수합 (예상 승리): 각자 1점
+    // - 승리팀 점수합 <  패배팀 점수합 (역전 승리): 차이의 30%, 최소 1점 (소수점 절사)
+    var delta;
+    if (winnersScoreSum >= losersScoreSum) {
+      delta = 1;
+    } else {
+      delta = Math.floor(diff * 0.3);
+      if (delta < 1) delta = 1;
+    }
+
+    // 점수 업데이트
     winners.forEach(function (id) {
-      state.matchScores[id] = (state.matchScores[id] || 0) + 1;
+      state.matchScores[id] = (state.matchScores[id] || 0) + delta;
     });
     losers.forEach(function (id) {
-      state.matchScores[id] = (state.matchScores[id] || 0) - 1;
+      state.matchScores[id] = (state.matchScores[id] || 0) - delta;
     });
     updateTotalScores();
-    
-    // 경기당 승패 기록: 경기당 승자 팀 각 멤버 1승, 패자 팀 각 멤버 1패
+
+    // 경기당 승패 기록
     winners.forEach(function (id) {
       if (!state.matchWins[id]) {
         state.matchWins[id] = { wins: 0, losses: 0 };
@@ -1688,33 +1837,54 @@
       }
       state.matchWins[id].losses = (state.matchWins[id].losses || 0) + 1;
     });
-    
-    // 개인 대 개인 승패 기록 (상대별 승률용): 경기당 승자 팀의 각 멤버가 패자 팀의 각 멤버에게 1승씩 기록
+
+    // 개인 대 개인 승패 기록 (상대별 승률용)
     winners.forEach(function (w) {
       losers.forEach(function (l) {
-        const key = pairKey(w, l); // 정렬된 키 (작은 ID가 앞에)
+        const key = pairKey(w, l);
         if (!state.headToHead[key]) {
           state.headToHead[key] = { wins1: 0, wins2: 0 };
         }
         const h = state.headToHead[key];
         const [id1, id2] = key.split('::');
-        
-        // id1이 승자면 wins1 증가, id2가 승자면 wins2 증가
         if (id1 === w) {
           h.wins1 = (h.wins1 || 0) + 1;
         } else if (id2 === w) {
           h.wins2 = (h.wins2 || 0) + 1;
-        } else {
-          // 디버깅: 조건이 맞지 않는 경우
-          console.error('applyResult - 조건 불일치:', 'id1:', id1, 'id2:', id2, '승자:', w, '패자:', l, 'key:', key);
         }
         state.headToHead[key] = h;
-        
-        const winnerName = state.users.find(function(u) { return u.id === w; });
-        const loserName = state.users.find(function(u) { return u.id === l; });
-        console.log('applyResult - headToHead 기록:', winnerName ? winnerName.name : w, 'vs', loserName ? loserName.name : l, 'key:', key, 'id1:', id1, 'id2:', id2, '승자:', w, 'wins1:', h.wins1, 'wins2:', h.wins2);
       });
     });
+
+    return delta;
+  }
+
+  function rebuildMatchScoresFromAppliedResults() {
+    state.matchScores = state.matchScores || {};
+    state.users.forEach(function (u) {
+      state.matchScores[u.id] = 0;
+    });
+    Object.keys(state.events || {}).forEach(function (dateKey) {
+      var ev = state.events[dateKey];
+      if (!ev || !ev.appliedMatchResults || !ev.bracketSnapshot) return;
+      var snapshot = ev.bracketSnapshot;
+      ev.appliedMatchResults.forEach(function (ar) {
+        var game = snapshot.find(function (g) { return g.gameIndex === ar.gameIndex; });
+        if (!game || !game.matches || !game.matches[ar.matchIdx]) return;
+        var m = game.matches[ar.matchIdx];
+        if (!m.team1 || !m.team2) return;
+        var winners = ar.winner === 1 ? m.team1 : m.team2;
+        var losers = ar.winner === 1 ? m.team2 : m.team1;
+        var delta = ar.scoreDelta || 1;
+        winners.forEach(function (id) {
+          state.matchScores[id] = (state.matchScores[id] || 0) + delta;
+        });
+        losers.forEach(function (id) {
+          state.matchScores[id] = (state.matchScores[id] || 0) - delta;
+        });
+      });
+    });
+    updateTotalScores();
   }
 
   function getWinsLosses(userId) {
@@ -1728,22 +1898,15 @@
     return { wins: 0, losses: 0 };
   }
 
-  // 정렬 함수: 그레이드 순 > 점수 순 > 이름 가나다 순
+  // 정렬 함수: 점수 순 > 이름 가나다 순
   function sortUsersByGradeScoreName(a, b) {
-    // 1. 그레이드 순 (A > B > C)
-    var gradeOrder = { 'A': 1, 'B': 2, 'C': 3 };
-    var gradeA = gradeOrder[a.grade] || 999;
-    var gradeB = gradeOrder[b.grade] || 999;
-    if (gradeA !== gradeB) {
-      return gradeA - gradeB;
-    }
-    // 2. 점수 순 (높은 순)
+    // 1. 점수 순 (높은 순)
     var scoreA = a.score || 0;
     var scoreB = b.score || 0;
     if (scoreA !== scoreB) {
       return scoreB - scoreA;
     }
-    // 3. 이름 가나다 순
+    // 2. 이름 가나다 순
     return (a.name || '').localeCompare(b.name || '', 'ko');
   }
 
@@ -1778,7 +1941,7 @@
       const totalGames = item.wins + item.losses;
       const gamesStr = totalGames > 0 ? '총 ' + totalGames + '경기 ' : '';
       const li = document.createElement('li');
-      li.innerHTML = '<span class="name">' + item.name + ' <small>(' + item.grade + ', ' + item.score + '점)</small></span><span class="score">' + gamesStr + item.wins + '승 ' + item.losses + '패 (승률 ' + item.rateStr + ')</span>';
+      li.innerHTML = '<span class="name">' + item.name + ' <small>(' + item.score + '점)</small></span><span class="score">' + gamesStr + item.wins + '승 ' + item.losses + '패 (승률 ' + item.rateStr + ')</span>';
       li.addEventListener('click', function () {
         state.vsUserId = item.id;
         document.querySelector('#stats-vs .vs-select select').value = item.id;
@@ -1841,7 +2004,7 @@
       ul.innerHTML = '<li style="padding: 20px; text-align: center; color: var(--text-muted);">사용자 데이터가 없습니다.</li>';
       return;
     }
-    // 사용자 리스트를 정렬: 그레이드 순 > 점수 순 > 이름 가나다 순
+    // 사용자 리스트를 정렬: 점수 순 > 이름 가나다 순
     const sortedUsers = state.users.map(function (u) {
       return {
         id: u.id,
@@ -1861,7 +2024,7 @@
         li.style.backgroundColor = 'var(--primary-light)';
         li.style.borderLeft = '3px solid var(--primary)';
       }
-      li.innerHTML = '<span class="name">' + u.name + ' (' + u.grade + ', ' + u.score + '점)</span>';
+      li.innerHTML = '<span class="name">' + u.name + ' (' + u.score + '점)</span>';
       li.addEventListener('click', function () {
         // 선택 상태 토글
         if (state.selectedMemberId === u.id) {
@@ -1883,20 +2046,17 @@
     // mode: 'add' 또는 'edit'
     var formTitle = document.getElementById('member-form-title');
     var nameInput = document.getElementById('member-form-name');
-    var gradeSelect = document.getElementById('member-form-grade');
     var scoreInput = document.getElementById('member-form-score');
-    
+
     if (mode === 'add') {
       if (formTitle) formTitle.textContent = '회원 추가';
       if (nameInput) nameInput.value = '';
-      if (gradeSelect) gradeSelect.value = 'C';
       if (scoreInput) scoreInput.value = '0';
     } else if (mode === 'edit' && userId) {
       var user = state.users.find(function(u) { return u.id === userId; });
       if (user) {
         if (formTitle) formTitle.textContent = '회원 수정';
         if (nameInput) nameInput.value = user.name;
-        if (gradeSelect) gradeSelect.value = user.grade || 'C';
         if (scoreInput) scoreInput.value = state.baseScores[user.id] || 0;
       }
     }
@@ -1919,27 +2079,24 @@
 
   function saveMember(mode, userId) {
     var nameInput = document.getElementById('member-form-name');
-    var gradeSelect = document.getElementById('member-form-grade');
     var scoreInput = document.getElementById('member-form-score');
-    
-    if (!nameInput || !gradeSelect || !scoreInput) return;
-    
+
+    if (!nameInput || !scoreInput) return;
+
     var name = nameInput.value.trim();
-    var grade = gradeSelect.value;
     var score = parseFloat(scoreInput.value) || 0;
-    
+
     if (!name) {
       alert('이름을 입력해주세요.');
       return;
     }
-    
+
     if (mode === 'add') {
       // 새 회원 추가
       var newId = 'u' + Date.now();
       var newUser = {
         id: newId,
-        name: name,
-        grade: grade === 'A' || grade === 'B' ? grade : 'C'
+        name: name
       };
       state.users.push(newUser);
       state.baseScores[newId] = score;
@@ -1949,7 +2106,6 @@
       var user = state.users.find(function(u) { return u.id === userId; });
       if (user) {
         user.name = name;
-        user.grade = grade === 'A' || grade === 'B' ? grade : 'C';
         state.baseScores[userId] = score;
         if (state.matchScores[userId] === undefined) {
           state.matchScores[userId] = 0;
@@ -2020,7 +2176,6 @@
     const totalScore = state.scores[user.id] || 0;
     
     document.getElementById('member-detail-name').textContent = user.name;
-    document.getElementById('member-detail-grade').textContent = user.grade;
     document.getElementById('member-detail-base-score').textContent = baseScore;
     document.getElementById('member-detail-match-score').textContent = matchScore >= 0 ? '+' + matchScore : matchScore;
     document.getElementById('member-detail-total-score').textContent = totalScore;
@@ -2072,7 +2227,7 @@
         name: u.name
       };
     });
-    // 상대별 승률 리스트 정렬: 그레이드 순 > 점수 순 > 이름 가나다 순
+    // 상대별 승률 리스트 정렬: 점수 순 > 이름 가나다 순
     vsData.sort(function (a, b) {
       return sortUsersByGradeScoreName(a, b);
     });
@@ -2081,7 +2236,7 @@
       const li = document.createElement('li');
       const matchStr = v.total > 0 ? '총 ' + v.total + '경기 · ' : '';
       const userScore = state.scores[v.user.id] || 0;
-      li.innerHTML = '<span class="name">' + v.user.name + ' (' + v.user.grade + ', ' + userScore + '점)</span><span class="rate">' + matchStr + v.myWins + '승 ' + v.otherWins + '패 (승률 ' + v.rate + '%)</span>';
+      li.innerHTML = '<span class="name">' + v.user.name + ' (' + userScore + '점)</span><span class="rate">' + matchStr + v.myWins + '승 ' + v.otherWins + '패 (승률 ' + v.rate + '%)</span>';
       ul.appendChild(li);
     });
   }
@@ -2628,7 +2783,7 @@
           var game = snap.find(function (g) { return g.gameIndex === ar.gameIndex; });
           if (!game || !game.matches || !game.matches[ar.matchIdx]) return;
           var m = game.matches[ar.matchIdx];
-          revertResult({ team1: m.team1, team2: m.team2, winner: ar.winner });
+          revertResult({ team1: m.team1, team2: m.team2, winner: ar.winner, scoreDelta: ar.scoreDelta });
         });
         ev.bracketSnapshot = null;
         ev.bracketParticipationSnapshot = null;
