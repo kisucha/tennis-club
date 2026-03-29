@@ -23,7 +23,10 @@
   function getStartTimeOptions() {
     var opts = [];
     for (var h = 5; h <= 12; h++) {
-      opts.push((h < 10 ? '0' : '') + h + ':00');
+      for (var mm = 0; mm < 60; mm += 15) {
+        if (h === 12 && mm > 0) break;
+        opts.push((h < 10 ? '0' : '') + h + ':' + (mm < 10 ? '0' : '') + mm);
+      }
     }
     return opts;
   }
@@ -908,8 +911,8 @@
           return {
             userId: u.id,
             attend: false,
-            checkIn: defStart,
-            checkOut: getCheckOutDefault(defStart)
+            checkIn: 1,
+            checkOut: TOTAL_GAMES
           };
         }),
         matches: []
@@ -925,8 +928,8 @@
         ev.participants.push({
           userId: u.id,
           attend: false,
-          checkIn: st,
-          checkOut: getCheckOutDefault(st)
+          checkIn: 1,
+          checkOut: TOTAL_GAMES
         });
       }
     });
@@ -1352,12 +1355,7 @@
       startSel.disabled = readOnly;
       if (!readOnly) {
         startSel.onchange = function () {
-          var newStart = startSel.value;
-          ev.startTime = newStart;
-          ev.participants.forEach(function (p) {
-            p.checkIn = newStart;
-            p.checkOut = getCheckOutDefault(newStart);
-          });
+          ev.startTime = startSel.value;
           saveState();
           renderDayView();
         };
