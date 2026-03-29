@@ -1,10 +1,10 @@
 (function () {
   'use strict';
 
-  const DEFAULT_START = '07:00';
+  const DEFAULT_START = '07:15';
   const GAME_DURATION_MIN = 40;
   const GAMES_BY_GRADE = 3;
-  const TOTAL_GAMES = 5;
+  const TOTAL_GAMES = 4;
 
   function getApiBase() {
     var base = (typeof window !== 'undefined' && window.TENNIS_API_BASE) ? window.TENNIS_API_BASE : '';
@@ -558,29 +558,16 @@
     return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
   }
 
-  function getCheckInOutOptions(startTime) {
-    var start = startTime || DEFAULT_START;
-    var min = timeToMinutes(start);
-    return [
-      minutesToTime(min),
-      minutesToTime(min + 30),
-      minutesToTime(min + 60)
-    ];
-  }
-
-  var CHECKOUT_DEFAULT_OFFSET_MIN = 240;
-
-  function getCheckOutDefault(checkInTime) {
-    return minutesToTime(timeToMinutes(checkInTime || DEFAULT_START) + CHECKOUT_DEFAULT_OFFSET_MIN);
-  }
-
-  function getCheckOutOptions(checkInTime) {
-    var start = checkInTime || DEFAULT_START;
-    var min = timeToMinutes(start);
+  function getCheckInOptions() {
     var opts = [];
-    for (var i = 0; i <= CHECKOUT_DEFAULT_OFFSET_MIN; i += 30) {
-      opts.push(minutesToTime(min + i));
-    }
+    for (var i = 1; i <= TOTAL_GAMES; i++) opts.push(i);
+    return opts;
+  }
+
+  function getCheckOutOptions(checkIn) {
+    var opts = [];
+    var ci = parseInt(checkIn) || 1;
+    for (var i = ci + 1; i <= TOTAL_GAMES; i++) opts.push(i);
     return opts;
   }
 
@@ -593,14 +580,10 @@
   }
 
   function isAvailableForGame(dateKey, participant, gameIndex) {
-    const ev = state.events[dateKey];
-    const base = ev && ev.startTime ? ev.startTime : DEFAULT_START;
-    const gameStart = getGameStartTime(dateKey, gameIndex);
-    const gameEndMin = timeToMinutes(gameStart) + GAME_DURATION_MIN;
-    const gameEnd = minutesToTime(gameEndMin);
-    const checkIn = participant.checkIn || base;
-    const checkOut = participant.checkOut || participant.checkIn || base;
-    return timeToMinutes(checkIn) <= timeToMinutes(gameStart) && timeToMinutes(checkOut) >= timeToMinutes(gameEnd);
+    var checkIn = parseInt(participant.checkIn) || 1;
+    var checkOut = parseInt(participant.checkOut) || TOTAL_GAMES;
+    if (checkOut < checkIn) checkOut = TOTAL_GAMES;
+    return checkIn <= gameIndex && gameIndex <= checkOut;
   }
 
   function getParticipantsForGame(dateKey, gameIndex) {
@@ -1421,7 +1404,11 @@
       checkGroup.className = 'check-group';
 
       if (readOnly) {
-        checkGroup.innerHTML = '<div class="check-row">' + (p.attend ? '참여' : '미참여') + ' · 체크인 ' + (p.checkIn || ev.startTime || DEFAULT_START) + ' · 체크아웃 ' + (p.checkOut || getCheckOutDefault(p.checkIn || ev.startTime)) + '</div>';
+        var rci = parseInt(p.checkIn) || 1;
+        var rco = parseInt(p.checkOut) || TOTAL_GAMES;
+        if (rco < rci) rco = TOTAL_GAMES;
+        var rcoText = rci < TOTAL_GAMES ? ' · 체크아웃 ' + rco + '게임' : '';
+        checkGroup.innerHTML = '<div class="check-row">' + (p.attend ? '참여' : '미참여') + ' · 체크인 ' + rci + '게임' + rcoText + '</div>';
       } else {
         var attendRow = document.createElement('div');
         attendRow.className = 'check-row';
@@ -1436,20 +1423,22 @@
         attendRow.appendChild(document.createTextNode('참여'));
         checkGroup.appendChild(attendRow);
 
-        var timeOpts = getCheckInOutOptions(ev.startTime || DEFAULT_START);
         var checkInRow = document.createElement('div');
         checkInRow.className = 'check-row';
         checkInRow.appendChild(document.createTextNode('체크인 '));
         var checkInSel = document.createElement('select');
-        timeOpts.forEach(function (t) {
+        var currentCheckIn = parseInt(p.checkIn) || 1;
+        getCheckInOptions().forEach(function (n) {
           var opt = document.createElement('option');
-          opt.value = t;
-          opt.textContent = t;
-          if (t === (p.checkIn || ev.startTime || DEFAULT_START)) opt.selected = true;
+          opt.value = n;
+          opt.textContent = n + '게임';
+          if (n === currentCheckIn) opt.selected = true;
           checkInSel.appendChild(opt);
         });
         checkInSel.addEventListener('change', function () {
-          p.checkIn = checkInSel.value;
+          p.checkIn = parseInt(checkInSel.value);
+          var co = parseInt(p.checkOut) || TOTAL_GAMES;
+          if (co <= p.checkIn) p.checkOut = Math.min(p.checkIn + 1, TOTAL_GAMES);
           fillCheckOutOptions();
           saveState();
         });
@@ -1461,25 +1450,26 @@
         checkOutRow.appendChild(document.createTextNode('체크아웃 '));
         var checkOutSel = document.createElement('select');
         function fillCheckOutOptions() {
-          var checkIn = p.checkIn || ev.startTime || DEFAULT_START;
-          var checkOutOpts = getCheckOutOptions(checkIn);
+          var ci = parseInt(p.checkIn) || 1;
+          var co = parseInt(p.checkOut) || TOTAL_GAMES;
+          var opts = getCheckOutOptions(ci);
+          checkOutRow.style.display = opts.length ? '' : 'none';
           checkOutSel.innerHTML = '';
-          checkOutOpts.forEach(function (t) {
+          opts.forEach(function (n) {
             var opt = document.createElement('option');
-            opt.value = t;
-            opt.textContent = t;
-            if (t === (p.checkOut || getCheckOutDefault(checkIn))) opt.selected = true;
+            opt.value = n;
+            opt.textContent = n + '게임';
+            if (n === co) opt.selected = true;
             checkOutSel.appendChild(opt);
           });
-          var defaultOut = getCheckOutDefault(checkIn);
-          if (!p.checkOut || timeToMinutes(p.checkOut) <= timeToMinutes(checkIn)) {
-            p.checkOut = defaultOut;
+          if (opts.length && !checkOutSel.value) {
+            checkOutSel.value = opts[opts.length - 1];
+            p.checkOut = parseInt(checkOutSel.value);
           }
-          if (checkOutSel.options.length && !checkOutSel.value) checkOutSel.value = p.checkOut;
         }
         fillCheckOutOptions();
         checkOutSel.addEventListener('change', function () {
-          p.checkOut = checkOutSel.value;
+          p.checkOut = parseInt(checkOutSel.value);
           saveState();
         });
         checkOutRow.appendChild(checkOutSel);
