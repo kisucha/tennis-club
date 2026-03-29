@@ -185,6 +185,11 @@ body {
   color: var(--primary);
 }
 
+.calendar-grid .weekday.sunday {
+  background: #fde8e8;
+  color: #d94f4f;
+}
+
 .calendar-grid .day-cell {
   background: var(--card);
   min-height: 44px;
@@ -198,6 +203,16 @@ body {
 
 .calendar-grid .day-cell.other-month {
   color: #aaa;
+}
+
+.calendar-grid .day-cell.sunday {
+  background: #fff5f5;
+  color: #d94f4f;
+}
+
+.calendar-grid .day-cell.sunday.other-month {
+  background: #fff5f5;
+  color: #edadad;
 }
 
 .calendar-grid .day-cell.today {

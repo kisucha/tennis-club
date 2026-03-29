@@ -1261,9 +1261,10 @@
     const grid = document.getElementById('calendar-grid');
     grid.innerHTML = '';
     const weekdays = ['일', '월', '화', '수', '목', '금', '토'];
-    weekdays.forEach(function (w) {
+    weekdays.forEach(function (w, i) {
       const cell = document.createElement('div');
       cell.className = 'weekday';
+      if (i === 0) cell.classList.add('sunday');
       cell.textContent = w;
       grid.appendChild(cell);
     });
@@ -1274,6 +1275,7 @@
     for (let i = 0; i < prevMonthDays; i++) {
       const cell = document.createElement('div');
       cell.className = 'day-cell other-month';
+      if (i % 7 === 0) cell.classList.add('sunday');
       cell.textContent = prevDays - prevMonthDays + 1 + i;
       grid.appendChild(cell);
     }
@@ -1282,6 +1284,8 @@
     for (let d = 1; d <= daysInMonth; d++) {
       const cell = document.createElement('div');
       cell.className = 'day-cell';
+      const dayOfWeek = (startDay + d - 1) % 7;
+      if (dayOfWeek === 0) cell.classList.add('sunday');
       const dayStr = y + '-' + (m + 1).toString().padStart(2, '0') + '-' + (d.toString().padStart(2, '0'));
       if (dayStr === todayStr) cell.classList.add('today');
       if (state.events[dayStr]) cell.classList.add('has-event');
@@ -1313,6 +1317,7 @@
     for (let i = 0; i < remaining; i++) {
       const cell = document.createElement('div');
       cell.className = 'day-cell other-month';
+      if ((totalCells + i) % 7 === 0) cell.classList.add('sunday');
       cell.textContent = i + 1;
       grid.appendChild(cell);
     }

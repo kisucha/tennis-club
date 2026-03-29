@@ -1,15 +1,11 @@
 var express = require('express');
 var path = require('path');
-var mariadb = require('mariadb');
+var fs = require('fs');
 
 var app = express();
 var PORT = process.env.PORT || 3000;
 
-var DB_HOST = process.env.DB_HOST || 'localhost';
-var DB_PORT = parseInt(process.env.DB_PORT || '3306', 10);
-var DB_USER = process.env.DB_USER || 'root';
-var DB_PASSWORD = process.env.DB_PASSWORD || '';
-var DB_NAME = process.env.DB_NAME || 'tennis_club';
+var STATE_FILE = path.join(__dirname, 'data', 'state.json');
 
 var DEFAULT_STATE = {
   users: [],
@@ -21,8 +17,6 @@ var DEFAULT_STATE = {
   matchWins: {}
 };
 
-var pool = null;
-
 function safeJsonParse(value, fallback) {
   try {
     if (value == null) return fallback;
@@ -33,102 +27,40 @@ function safeJsonParse(value, fallback) {
   }
 }
 
-function ensureDatabase() {
-  return mariadb
-    .createConnection({ host: DB_HOST, port: DB_PORT, user: DB_USER, password: DB_PASSWORD })
-    .then(function (conn) {
-      return conn
-        .query('CREATE DATABASE IF NOT EXISTS `' + DB_NAME + '`')
-        .then(function () { return conn.end(); });
-    });
-}
-
-function ensureSchema() {
-  pool = mariadb.createPool({
-    host: DB_HOST,
-    port: DB_PORT,
-    user: DB_USER,
-    password: DB_PASSWORD,
-    database: DB_NAME,
-    connectionLimit: 5
-  });
-  return pool.getConnection().then(function (conn) {
-    return conn
-      .query(
-        'CREATE TABLE IF NOT EXISTS tennis_state (' +
-          'id INT PRIMARY KEY,' +
-          'data JSON NOT NULL,' +
-          'revision INT NOT NULL DEFAULT 0,' +
-          'updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP' +
-        ')'
-      )
-      .then(function () {
-        return conn.query(
-          'INSERT INTO tennis_state (id, data, revision) VALUES (1, ?, 0) ' +
-          'ON DUPLICATE KEY UPDATE id=id',
-          [JSON.stringify(DEFAULT_STATE)]
-        );
-      })
-      .then(function () { conn.release(); });
-  });
-}
-
 function initDb() {
-  return ensureDatabase().then(ensureSchema);
+  return new Promise(function (resolve) {
+    var dataDir = path.join(__dirname, 'data');
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+    if (!fs.existsSync(STATE_FILE)) {
+      fs.writeFileSync(STATE_FILE, JSON.stringify({ data: DEFAULT_STATE, revision: 0 }, null, 2), 'utf8');
+    }
+    resolve();
+  });
 }
 
 function readState() {
-  return pool.getConnection().then(function (conn) {
-    return conn
-      .query('SELECT data, revision FROM tennis_state WHERE id=1')
-      .then(function (rows) {
-        conn.release();
-        if (!rows || !rows.length) {
-          return { data: DEFAULT_STATE, revision: 0 };
-        }
-        var row = rows[0];
-        return {
-          data: safeJsonParse(row.data, DEFAULT_STATE),
-          revision: row.revision || 0
-        };
-      })
-      .catch(function (err) {
-        conn.release();
-        throw err;
+  return new Promise(function (resolve) {
+    try {
+      var content = fs.readFileSync(STATE_FILE, 'utf8');
+      var parsed = safeJsonParse(content, {});
+      resolve({
+        data: parsed.data || DEFAULT_STATE,
+        revision: parsed.revision || 0
       });
+    } catch (e) {
+      resolve({ data: DEFAULT_STATE, revision: 0 });
+    }
   });
 }
 
 function writeState(data, baseRevision, force) {
-  return pool.getConnection().then(function (conn) {
-    return conn
-      .beginTransaction()
-      .then(function () {
-        return conn.query('SELECT revision FROM tennis_state WHERE id=1 FOR UPDATE');
-      })
-      .then(function (rows) {
-        var currentRevision = rows && rows[0] ? rows[0].revision : 0;
-        if (!force && typeof baseRevision === 'number' && baseRevision !== currentRevision) {
-          return conn.rollback().then(function () {
-            conn.release();
-            return { conflict: true, currentRevision: currentRevision };
-          });
-        }
-        var nextRevision = currentRevision + 1;
-        return conn
-          .query('UPDATE tennis_state SET data=?, revision=? WHERE id=1', [JSON.stringify(data), nextRevision])
-          .then(function () { return conn.commit(); })
-          .then(function () {
-            conn.release();
-            return { revision: nextRevision };
-          });
-      })
-      .catch(function (err) {
-        return conn.rollback().then(function () {
-          conn.release();
-          throw err;
-        });
-      });
+  return readState().then(function (current) {
+    if (!force && typeof baseRevision === 'number' && baseRevision !== current.revision) {
+      return { conflict: true, currentRevision: current.revision };
+    }
+    var nextRevision = current.revision + 1;
+    fs.writeFileSync(STATE_FILE, JSON.stringify({ data: data, revision: nextRevision }, null, 2), 'utf8');
+    return { revision: nextRevision };
   });
 }
 
@@ -143,7 +75,7 @@ app.use(function (req, res, next) {
 app.use(express.static(__dirname));
 
 app.get('/api/health', function (req, res) {
-  res.json({ ok: true, db: DB_NAME });
+  res.json({ ok: true, storage: 'file' });
 });
 
 app.get('/api/state', function (req, res) {
@@ -183,10 +115,10 @@ initDb()
   .then(function () {
     app.listen(PORT, function () {
       console.log('테니스 클럽 서버: http://localhost:' + PORT);
-      console.log('DB: ' + DB_HOST + ':' + DB_PORT + ' / ' + DB_NAME);
+      console.log('저장소: ' + STATE_FILE);
     });
   })
   .catch(function (err) {
-    console.error('DB 초기화 실패:', err);
+    console.error('초기화 실패:', err);
     process.exit(1);
   });
