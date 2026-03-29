@@ -226,6 +226,11 @@ body {
   color: var(--primary);
 }
 
+.calendar-grid .day-cell.sunday.has-event {
+  background: #fde8e8;
+  color: #d94f4f;
+}
+
 .calendar-grid .day-cell .day-num {
   width: 32px;
   height: 32px;
