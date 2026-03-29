@@ -2586,27 +2586,6 @@
       renderCalendar();
     });
 
-    document.getElementById('month-start-time').addEventListener('change', function () {
-      var sel = document.getElementById('month-start-time');
-      if (!state.currentMonth || !sel) return;
-      var newStart = sel.value;
-      var ym = state.currentMonth;
-      var y = ym.getFullYear();
-      var m = ym.getMonth();
-      var last = new Date(y, m + 1, 0).getDate();
-      for (var d = 1; d <= last; d++) {
-        var dayStr = y + '-' + (m + 1).toString().padStart(2, '0') + '-' + (d.toString().padStart(2, '0'));
-        ensureEvent(dayStr);
-        var ev = state.events[dayStr];
-        ev.startTime = newStart;
-        (ev.participants || []).forEach(function (p) {
-          p.checkIn = newStart;
-          p.checkOut = getCheckOutDefault(newStart);
-        });
-      }
-      saveState();
-      renderCalendar();
-    });
 
     var btnBackCalendar = document.getElementById('btn-back-calendar');
     if (btnBackCalendar) {
