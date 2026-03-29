@@ -1,8 +1,6 @@
 (function () {
   'use strict';
 
-  const DEFAULT_START = '07:15';
-  const GAME_DURATION_MIN = 40;
   const GAMES_BY_GRADE = 3;
   const TOTAL_GAMES = 4;
 
@@ -20,16 +18,6 @@
     return p === 'http:' || p === 'https:';
   }
 
-  function getStartTimeOptions() {
-    var opts = [];
-    for (var h = 5; h <= 12; h++) {
-      for (var mm = 0; mm < 60; mm += 15) {
-        if (h === 12 && mm > 0) break;
-        opts.push((h < 10 ? '0' : '') + h + ':' + (mm < 10 ? '0' : '') + mm);
-      }
-    }
-    return opts;
-  }
 
   let state = {
     users: [],
@@ -550,17 +538,6 @@
     return [id1, id2].sort().join('::');
   }
 
-  function timeToMinutes(t) {
-    const [h, m] = t.split(':').map(Number);
-    return h * 60 + m;
-  }
-
-  function minutesToTime(min) {
-    const h = Math.floor(min / 60);
-    const m = min % 60;
-    return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
-  }
-
   function getCheckInOptions() {
     var opts = [];
     for (var i = 1; i <= TOTAL_GAMES; i++) opts.push(i);
@@ -572,14 +549,6 @@
     var ci = parseInt(checkIn) || 1;
     for (var i = ci + 1; i <= TOTAL_GAMES; i++) opts.push(i);
     return opts;
-  }
-
-  function getGameStartTime(dateKey, gameIndex) {
-    const ev = state.events[dateKey];
-    const start = ev && ev.startTime ? ev.startTime : DEFAULT_START;
-    const startMin = timeToMinutes(start);
-    const gameStartMin = startMin + (gameIndex - 1) * GAME_DURATION_MIN;
-    return minutesToTime(gameStartMin);
   }
 
   function isAvailableForGame(dateKey, participant, gameIndex) {
@@ -867,7 +836,6 @@
       const br = buildBracketForGame(dateKey, g, sameDayTeammates, prevGameWaiting);
       result.push({
         gameIndex: g,
-        startTime: getGameStartTime(dateKey, g),
         matches: br.matches,
         waiting: br.waiting
       });
@@ -904,16 +872,9 @@
 
   function ensureEvent(dateKey) {
     if (!state.events[dateKey]) {
-      var defStart = DEFAULT_START;
       state.events[dateKey] = {
-        startTime: defStart,
         participants: state.users.map(function (u) {
-          return {
-            userId: u.id,
-            attend: false,
-            checkIn: 1,
-            checkOut: TOTAL_GAMES
-          };
+          return { userId: u.id, attend: false, checkIn: 1, checkOut: TOTAL_GAMES };
         }),
         matches: []
       };
@@ -924,23 +885,16 @@
     const existingIds = new Set(ev.participants.map(function (p) { return p.userId; }));
     state.users.forEach(function (u) {
       if (!existingIds.has(u.id)) {
-        var st = ev.startTime || DEFAULT_START;
-        ev.participants.push({
-          userId: u.id,
-          attend: false,
-          checkIn: 1,
-          checkOut: TOTAL_GAMES
-        });
+        ev.participants.push({ userId: u.id, attend: false, checkIn: 1, checkOut: TOTAL_GAMES });
       }
     });
     ev.participants = ev.participants.filter(function (p) {
       return userIds.indexOf(p.userId) !== -1;
     });
-    (ev.participants || []).forEach(function (p) {
-      var ci = p.checkIn || ev.startTime || DEFAULT_START;
-      var co = p.checkOut || ci;
-      if (!p.checkOut || timeToMinutes(co) <= timeToMinutes(ci)) {
-        p.checkOut = getCheckOutDefault(ci);
+    ev.participants.forEach(function (p) {
+      var ci = parseInt(p.checkIn) || 1;
+      if (!p.checkOut || parseInt(p.checkOut) <= ci) {
+        p.checkOut = TOTAL_GAMES;
       }
     });
     return ev;
@@ -1291,7 +1245,6 @@
           return;
         }
         document.getElementById('day-title').textContent = dayStr + ' 경기';
-        fillStartTimeSelect('day-start-time', (ev && ev.startTime) ? ev.startTime : DEFAULT_START);
         showScreen('screen-day');
         renderDayView();
       });
@@ -1312,22 +1265,7 @@
       const ym = state.currentMonth;
       const firstDayKey = ym.getFullYear() + '-' + (ym.getMonth() + 1).toString().padStart(2, '0') + '-01';
       ensureEvent(firstDayKey);
-      fillStartTimeSelect('month-start-time', state.events[firstDayKey].startTime || DEFAULT_START);
     }
-  }
-
-  function fillStartTimeSelect(selectId, selectedValue) {
-    var sel = document.getElementById(selectId);
-    if (!sel) return;
-    var opts = getStartTimeOptions();
-    sel.innerHTML = '';
-    opts.forEach(function (t) {
-      var opt = document.createElement('option');
-      opt.value = t;
-      opt.textContent = t;
-      if (t === (selectedValue || DEFAULT_START)) opt.selected = true;
-      sel.appendChild(opt);
-    });
   }
 
   function renderDayView() {
@@ -1347,19 +1285,6 @@
           dayToolbar.insertBefore(roNote, dayToolbar.firstChild);
         }
       } else if (roNote) roNote.remove();
-    }
-
-    fillStartTimeSelect('day-start-time', ev.startTime || DEFAULT_START);
-    var startSel = document.getElementById('day-start-time');
-    if (startSel) {
-      startSel.disabled = readOnly;
-      if (!readOnly) {
-        startSel.onchange = function () {
-          ev.startTime = startSel.value;
-          saveState();
-          renderDayView();
-        };
-      }
     }
 
     var ul = document.getElementById('participant-list');
@@ -1562,14 +1487,14 @@
     } else if (!readOnly && totalMatchesInBrackets === 0 && attendCount >= 4) {
       var notice2 = document.createElement('div');
       notice2.className = 'bracket-notice';
-      notice2.innerHTML = '참여는 ' + attendCount + '명인데, 게임 1회차에 참가 가능한 인원이 ' + availableGame1 + '명입니다. 게임 1은 시작시간(예: 07:00)에 체크인한 사람만 참가 가능하고, 체크아웃은 게임 종료(시작+40분) 이후여야 합니다. 당일 시작시간과 각자 체크인·체크아웃을 확인해 주세요.';
+      notice2.innerHTML = '참여는 ' + attendCount + '명인데, 게임 1회차에 참가 가능한 인원이 ' + availableGame1 + '명입니다. 각자 체크인·체크아웃 게임을 확인해 주세요.';
       container.appendChild(notice2);
     }
 
     brackets.forEach(function (b) {
       const card = document.createElement('div');
       card.className = 'game-card';
-      card.innerHTML = '<h3>게임 ' + b.gameIndex + ' (시작 ' + b.startTime + ')</h3>';
+      card.innerHTML = '<h3>게임 ' + b.gameIndex + '회차</h3>';
       const matchesDiv = document.createElement('div');
       matchesDiv.className = 'teams-row';
 
@@ -1577,7 +1502,7 @@
         var emptyMsg = document.createElement('div');
         emptyMsg.className = 'bracket-empty-msg';
         emptyMsg.style.gridColumn = '1 / -1';
-        emptyMsg.textContent = '이 회차에 참가 가능한 인원이 4명 미만입니다. 체크인·체크아웃 시간을 확인해 주세요.';
+        emptyMsg.textContent = '이 회차에 참가 가능한 인원이 4명 미만입니다. 체크인·체크아웃 게임을 확인해 주세요.';
         matchesDiv.appendChild(emptyMsg);
       }
 
