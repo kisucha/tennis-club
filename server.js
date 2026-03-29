@@ -1,6 +1,7 @@
 var express = require('express');
 var path = require('path');
 var fs = require('fs');
+var crypto = require('crypto');
 
 var app = express();
 var PORT = process.env.PORT || 3000;
@@ -64,6 +65,17 @@ function writeState(data, baseRevision, force) {
   });
 }
 
+// 서버 시작 시 CSS/JS 내용 해시로 버전 1회 계산 (배포마다 자동 갱신)
+var ASSET_VERSION = (function () {
+  try {
+    var css = fs.readFileSync(path.join(__dirname, 'styles.css'));
+    var js  = fs.readFileSync(path.join(__dirname, 'app.js'));
+    return crypto.createHash('md5').update(css).update(js).digest('hex').slice(0, 8);
+  } catch (e) {
+    return Date.now().toString(36);
+  }
+}());
+
 app.use(express.json({ limit: '2mb' }));
 app.use(function (req, res, next) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -72,6 +84,22 @@ app.use(function (req, res, next) {
   if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
 });
+
+// index.html은 직접 서빙하여 버전 파라미터 자동 주입
+app.get('/', function (req, res) {
+  try {
+    var html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
+    html = html
+      .replace(/href="styles\.css[^"]*"/, 'href="styles.css?v=' + ASSET_VERSION + '"')
+      .replace(/src="app\.js[^"]*"/, 'src="app.js?v=' + ASSET_VERSION + '"');
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  } catch (e) {
+    res.status(500).send('index.html 로드 실패');
+  }
+});
+
 app.use(express.static(__dirname));
 
 app.get('/api/health', function (req, res) {
