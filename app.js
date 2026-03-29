@@ -2670,25 +2670,19 @@
         alert('암호가 일치하지 않습니다. 대진표를 작성할 수 없습니다.');
         return;
       }
-      var totalMatchesInSnapshot = (ev.bracketSnapshot || []).reduce(function (s, b) {
-        return s + (b.matches ? b.matches.length : 0);
-      }, 0);
-      var mustRebuild = !ev.bracketSnapshot || ev.bracketSnapshot.length === 0 || totalMatchesInSnapshot === 0 || !participationUnchanged(ev);
-      if (mustRebuild) {
-        var snap = ev.bracketSnapshot || [];
-        (ev.appliedMatchResults || []).forEach(function (ar) {
-          var game = snap.find(function (g) { return g.gameIndex === ar.gameIndex; });
-          if (!game || !game.matches || !game.matches[ar.matchIdx]) return;
-          var m = game.matches[ar.matchIdx];
-          revertResult({ team1: m.team1, team2: m.team2, winner: ar.winner, scoreDelta: ar.scoreDelta });
-        });
-        ev.bracketSnapshot = null;
-        ev.bracketParticipationSnapshot = null;
-        ev.matchResults = [];
-        ev.appliedMatchResults = [];
-        buildFullBracket(dateKey, true);
-        saveState();
-      }
+      var snap = ev.bracketSnapshot || [];
+      (ev.appliedMatchResults || []).forEach(function (ar) {
+        var game = snap.find(function (g) { return g.gameIndex === ar.gameIndex; });
+        if (!game || !game.matches || !game.matches[ar.matchIdx]) return;
+        var m = game.matches[ar.matchIdx];
+        revertResult({ team1: m.team1, team2: m.team2, winner: ar.winner, scoreDelta: ar.scoreDelta });
+      });
+      ev.bracketSnapshot = null;
+      ev.bracketParticipationSnapshot = null;
+      ev.matchResults = [];
+      ev.appliedMatchResults = [];
+      buildFullBracket(dateKey, true);
+      saveState();
       showScreen('screen-bracket');
       renderBracket();
     });
