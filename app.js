@@ -601,7 +601,8 @@
     return { team1: best[0], team2: best[1] };
   }
 
-  function buildBracketForGame(dateKey, gameIndex, sameDayTeammates, prevWaiting) {
+  function buildBracketForGame(dateKey, gameIndex, sameDayTeammates, prevWaiting, alreadyWaited) {
+    alreadyWaited = alreadyWaited || {};
     var participants = getParticipantsForGame(dateKey, gameIndex);
 
     if (participants.length < 4) {
@@ -641,9 +642,10 @@
       groupB.forEach(function (p) { groupAssignments[p.userId] = 'B'; });
 
       function buildOnceAB() {
-        // 전체 인원에서 랜덤하게 대기자 차출
-        var shuffledAll = shuffle(enriched.slice());
-        var waiters = shuffledAll.slice(0, waitingCount).map(function (p) { return p.userId; });
+        // 대기자 우선순위: 아직 대기한 적 없는 사람 먼저 (랜덤)
+        var notWaited = shuffle(enriched.filter(function (p) { return !alreadyWaited[p.userId]; }));
+        var haveWaited = shuffle(enriched.filter(function (p) { return alreadyWaited[p.userId]; }));
+        var waiters = notWaited.concat(haveWaited).slice(0, waitingCount).map(function (p) { return p.userId; });
         var waiterSet = {};
         waiters.forEach(function (id) { waiterSet[id] = true; });
 
@@ -720,9 +722,20 @@
         return s !== 0 ? s : (Math.random() - 0.5);
       });
       var activeCount4 = n - waitingCount;
-      // 하위 waitingCount명 대기
-      var waiters4 = sorted4.slice(activeCount4).map(function (p) { return p.userId; });
-      var active4 = sorted4.slice(0, activeCount4);
+      // 대기자 우선순위: 아직 대기한 적 없는 사람 먼저 (점수 낮은 순)
+      var notWaited4 = sorted4.filter(function (p) { return !alreadyWaited[p.userId]; });
+      var haveWaited4 = sorted4.filter(function (p) { return alreadyWaited[p.userId]; });
+      var waiters4;
+      if (notWaited4.length >= waitingCount) {
+        waiters4 = notWaited4.slice(notWaited4.length - waitingCount).map(function (p) { return p.userId; });
+      } else {
+        var need4 = waitingCount - notWaited4.length;
+        waiters4 = notWaited4.map(function (p) { return p.userId; })
+          .concat(haveWaited4.slice(haveWaited4.length - need4).map(function (p) { return p.userId; }));
+      }
+      var waiterSet4 = {};
+      waiters4.forEach(function (id) { waiterSet4[id] = true; });
+      var active4 = sorted4.filter(function (p) { return !waiterSet4[p.userId]; });
       var matches4 = [];
       var left4 = 0, right4 = activeCount4 - 1;
       while (left4 < right4) {
@@ -832,15 +845,17 @@
 
     const result = [];
     var prevGameWaiting = null;
+    var alreadyWaited = {};  // 이전 게임에서 한 번이라도 대기한 사람 누적
     for (let g = 1; g <= TOTAL_GAMES; g++) {
-      const br = buildBracketForGame(dateKey, g, sameDayTeammates, prevGameWaiting);
+      const br = buildBracketForGame(dateKey, g, sameDayTeammates, prevGameWaiting, alreadyWaited);
       result.push({
         gameIndex: g,
         matches: br.matches,
         waiting: br.waiting
       });
+      (br.waiting || []).forEach(function (id) { alreadyWaited[id] = true; });
       if (g === GAMES_BY_GRADE + 1) {
-        prevGameWaiting = br.waiting; // 4번째 게임 대기자 → 5번째 게임에 전달
+        prevGameWaiting = br.waiting;
       }
     }
     ev.bracketSnapshot = JSON.parse(JSON.stringify(result));
