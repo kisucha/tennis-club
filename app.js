@@ -646,10 +646,14 @@
       groupB.forEach(function (p) { groupAssignments[p.userId] = 'B'; });
 
       function buildOnceAB() {
-        // 대기자 우선순위: 아직 대기한 적 없는 사람 먼저 (랜덤)
-        var notWaited = shuffle(enriched.filter(function (p) { return !alreadyWaited[p.userId]; }));
-        var haveWaited = shuffle(enriched.filter(function (p) { return alreadyWaited[p.userId]; }));
-        var waiters = notWaited.concat(haveWaited).slice(0, waitingCount).map(function (p) { return p.userId; });
+        // 대기자 우선순위: 대기 횟수 적은 사람 먼저, 횟수 동일하면 랜덤
+        var byWaitCount = enriched.slice().sort(function (a, b) {
+          var wa = alreadyWaited[a.userId] || 0;
+          var wb = alreadyWaited[b.userId] || 0;
+          if (wa !== wb) return wa - wb;
+          return Math.random() - 0.5;
+        });
+        var waiters = byWaitCount.slice(0, waitingCount).map(function (p) { return p.userId; });
         var waiterSet = {};
         waiters.forEach(function (id) { waiterSet[id] = true; });
 
@@ -726,17 +730,14 @@
         return s !== 0 ? s : (Math.random() - 0.5);
       });
       var activeCount4 = n - waitingCount;
-      // 대기자 우선순위: 아직 대기한 적 없는 사람 먼저 (점수 낮은 순)
-      var notWaited4 = sorted4.filter(function (p) { return !alreadyWaited[p.userId]; });
-      var haveWaited4 = sorted4.filter(function (p) { return alreadyWaited[p.userId]; });
-      var waiters4;
-      if (notWaited4.length >= waitingCount) {
-        waiters4 = notWaited4.slice(notWaited4.length - waitingCount).map(function (p) { return p.userId; });
-      } else {
-        var need4 = waitingCount - notWaited4.length;
-        waiters4 = notWaited4.map(function (p) { return p.userId; })
-          .concat(haveWaited4.slice(haveWaited4.length - need4).map(function (p) { return p.userId; }));
-      }
+      // 대기자 우선순위: 대기 횟수 적은 사람 먼저, 횟수 동일하면 점수 낮은 순
+      var sorted4waiters = enriched.slice().sort(function (a, b) {
+        var wa = alreadyWaited[a.userId] || 0;
+        var wb = alreadyWaited[b.userId] || 0;
+        if (wa !== wb) return wa - wb;
+        return a.score - b.score;
+      });
+      var waiters4 = sorted4waiters.slice(0, waitingCount).map(function (p) { return p.userId; });
       var waiterSet4 = {};
       waiters4.forEach(function (id) { waiterSet4[id] = true; });
       var active4 = sorted4.filter(function (p) { return !waiterSet4[p.userId]; });
@@ -857,7 +858,7 @@
         matches: br.matches,
         waiting: br.waiting
       });
-      (br.waiting || []).forEach(function (id) { alreadyWaited[id] = true; });
+      (br.waiting || []).forEach(function (id) { alreadyWaited[id] = (alreadyWaited[id] || 0) + 1; });
       if (g === GAMES_BY_GRADE + 1) {
         prevGameWaiting = br.waiting;
       }
