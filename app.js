@@ -471,6 +471,10 @@
         if (state.syncPending) {
           state.syncPending = false;
           syncStateToServer();
+        } else if (state.pendingShowCallback) {
+          var cb = state.pendingShowCallback;
+          state.pendingShowCallback = null;
+          cb();
         }
       });
   }
@@ -1188,12 +1192,18 @@
       });
     }
 
-    if (useServer() && id !== 'screen-load') {
-      refetchFromServer(function () {
+    function refetchAndShow() {
+      if (useServer() && id !== 'screen-load') {
+        refetchFromServer(function () { doShow(); });
+      } else {
         doShow();
-      });
+      }
+    }
+
+    if (state.syncInFlight) {
+      state.pendingShowCallback = refetchAndShow;
     } else {
-      doShow();
+      refetchAndShow();
     }
   }
 
@@ -2750,4 +2760,19 @@
   }
 
   init();
+
+  // 30초마다 서버에서 최신 상태를 가져와 다기기 동기화
+  if (useServer()) {
+    setInterval(function () {
+      if (state.syncInFlight || state.pendingShowCallback) return;
+      var activeScreen = document.querySelector('.screen.active');
+      var screenId = activeScreen ? activeScreen.id : '';
+      if (screenId === 'screen-load') return;
+      refetchFromServer(function () {
+        if (screenId === 'screen-calendar') renderCalendar();
+        else if (screenId === 'screen-day' && state.selectedDate) renderDayView();
+        else if (screenId === 'screen-stats') renderStats();
+      });
+    }, 30000);
+  }
 })();
