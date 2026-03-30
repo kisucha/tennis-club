@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  const GAMES_BY_GRADE = 3;
+  const GAMES_BY_GRADE = 2;
   const TOTAL_GAMES = 4;
 
   function getApiBase() {
@@ -788,12 +788,86 @@
       }
 
     } else if (gameIndex === GAMES_BY_GRADE + 1) {
-      // 4번째 게임: 점수 내림차순 정렬 후 [1위+꼴찌] vs [2위+2꼴찌] 방식
-      var sorted4 = enriched.slice().sort(function (a, b) {
-        var s = b.score - a.score;
-        return s !== 0 ? s : 0;
-      });
-      // 대기 후보: 1) 대기 횟수 적은 순, 2) 마지막으로 쉰 게임이 이른 순 (연속 대기 방지), 3) 점수 낮은 순
+      // 3번째 게임: 완전 랜덤 매칭
+      // 대기자 우선순위: 1) 대기 횟수 적은 순, 2) 마지막으로 쉰 게임이 이른 순, 3) 랜덤
+      function buildOnceRandom() {
+        var byWaitCount = enriched.slice().sort(function (a, b) {
+          var wa = alreadyWaited[a.userId] || 0;
+          var wb = alreadyWaited[b.userId] || 0;
+          if (wa !== wb) return wa - wb;
+          var la = lastWaitedGame[a.userId] || 0;
+          var lb = lastWaitedGame[b.userId] || 0;
+          if (la !== lb) return la - lb;
+          return Math.random() - 0.5;
+        });
+        var waiters3 = byWaitCount.slice(0, waitingCount).map(function (p) { return p.userId; });
+        var waiterSet3 = {};
+        waiters3.forEach(function (id) { waiterSet3[id] = true; });
+        var activePool = shuffle(enriched.filter(function (p) { return !waiterSet3[p.userId]; }));
+        var matches3 = [], bad3 = 0;
+        var localSameDay3 = Object.assign({}, sameDayTeammates);
+        while (activePool.length >= 4) {
+          var four3 = activePool.splice(0, 4).map(function (p) { return p.userId; });
+          var spl3 = splitIntoTeams(four3, localSameDay3, undefined);
+          matches3.push(createMatch(spl3.team1, spl3.team2));
+          var k13 = pairKey(spl3.team1[0], spl3.team1[1]);
+          var k23 = pairKey(spl3.team2[0], spl3.team2[1]);
+          if (sameDayTeammates[k13]) bad3++;
+          if (sameDayTeammates[k23]) bad3++;
+          localSameDay3[k13] = true;
+          localSameDay3[k23] = true;
+        }
+        return { matches: matches3, waiting: waiters3, badPairs: bad3 };
+      }
+
+      for (var t = 0; t < maxTries; t++) {
+        var attempt3 = buildOnceRandom();
+        if (!best || attempt3.badPairs < bestBad) {
+          best = attempt3;
+          bestBad = attempt3.badPairs;
+        }
+        if (bestBad === 0) break;
+      }
+
+      // 120회 시도 후에도 중복이 있으면 최소+1 대기 후보로도 시도
+      if (bestBad > 0 && waitingCount === 1) {
+        var minWcAlt3 = enriched.reduce(function (m, p) { return Math.min(m, alreadyWaited[p.userId] || 0); }, Infinity);
+        var altCandidates3 = enriched.filter(function (p) { return (alreadyWaited[p.userId] || 0) <= minWcAlt3 + 1; });
+        altCandidates3.sort(function (a, b) {
+          var wa = alreadyWaited[a.userId] || 0, wb = alreadyWaited[b.userId] || 0;
+          if (wa !== wb) return wa - wb;
+          var la = lastWaitedGame[a.userId] || 0, lb = lastWaitedGame[b.userId] || 0;
+          return la - lb;
+        });
+        altCandidates3.forEach(function (forceP) {
+          if (bestBad === 0) return;
+          var forceSet3 = {};
+          forceSet3[forceP.userId] = true;
+          for (var ft = 0; ft < 20; ft++) {
+            var fPool3 = shuffle(enriched.filter(function (p) { return !forceSet3[p.userId]; }));
+            var fMatches3 = [], fBad3 = 0, fLocal3 = Object.assign({}, sameDayTeammates);
+            while (fPool3.length >= 4) {
+              var four3f = fPool3.splice(0, 4).map(function (p) { return p.userId; });
+              var spl3f = splitIntoTeams(four3f, fLocal3, undefined);
+              fMatches3.push(createMatch(spl3f.team1, spl3f.team2));
+              var k13f = pairKey(spl3f.team1[0], spl3f.team1[1]);
+              var k23f = pairKey(spl3f.team2[0], spl3f.team2[1]);
+              if (sameDayTeammates[k13f]) fBad3++;
+              if (sameDayTeammates[k23f]) fBad3++;
+              fLocal3[k13f] = true; fLocal3[k23f] = true;
+            }
+            if (fBad3 < bestBad) {
+              best = { matches: fMatches3, waiting: [forceP.userId], badPairs: fBad3 };
+              bestBad = fBad3;
+            }
+          }
+        });
+      }
+
+    } else {
+      // 4번째 게임: [1위+꼴찌], [2위+꼴찌-1]... 팀 구성 후 홀짝 매치
+      // 홀수(인덱스 0,2,4...) 팀끼리, 짝수(인덱스 1,3,5...) 팀끼리 → 1위팀과 2위팀이 붙지 않음
+      // 대기 후보: 1) 대기 횟수 적은 순, 2) 마지막으로 쉰 게임이 이른 순, 3) 점수 낮은 순
       var sorted4waiters = enriched.slice().sort(function (a, b) {
         var wa = alreadyWaited[a.userId] || 0;
         var wb = alreadyWaited[b.userId] || 0;
@@ -804,11 +878,9 @@
         return a.score - b.score;
       });
       var minWait4 = alreadyWaited[sorted4waiters[0].userId] || 0;
-      // 최소 대기 횟수 +1까지 허용하여 중복 팀 방지 가능 후보 탐색
       var eligibleW4 = sorted4waiters.filter(function (p) {
         return (alreadyWaited[p.userId] || 0) <= minWait4 + 1;
       });
-      // waitingCount=1이면 각 후보를 순서대로 시도, 아니면 상위 waitingCount명
       var waiterCombos4 = waitingCount === 1
         ? eligibleW4.map(function (p) { return [p.userId]; })
         : [sorted4waiters.slice(0, waitingCount).map(function (p) { return p.userId; })];
@@ -818,69 +890,50 @@
         if (bestBad4 === 0) return;
         var waiterSet4 = {};
         waiterIds.forEach(function (id) { waiterSet4[id] = true; });
-        var active4 = sorted4.filter(function (p) { return !waiterSet4[p.userId]; });
-        var matches4 = [];
-        var bad4 = 0;
-        var left4 = 0, right4 = active4.length - 1;
-        while (left4 < right4) {
-          var t1 = [active4[left4].userId, active4[right4].userId];
-          var t2 = [active4[left4 + 1].userId, active4[right4 - 1].userId];
-          matches4.push(createMatch(t1, t2));
-          if (sameDayTeammates[pairKey(t1[0], t1[1])]) bad4++;
-          if (sameDayTeammates[pairKey(t2[0], t2[1])]) bad4++;
-          left4 += 2;
-          right4 -= 2;
+        // 점수 내림차순 정렬
+        var active4 = enriched.filter(function (p) { return !waiterSet4[p.userId]; })
+          .slice().sort(function (a, b) { return b.score - a.score; });
+        var N4 = active4.length;
+        // [1위+꼴찌], [2위+꼴찌-1], ... 팀 구성
+        var teams4 = [];
+        var lo4 = 0, hi4 = N4 - 1;
+        while (lo4 < hi4) {
+          teams4.push([active4[lo4].userId, active4[hi4].userId]);
+          lo4++; hi4--;
+        }
+        // 홀짝 분리: 인덱스 0,2,4...와 1,3,5...로 나눠 각각 매치
+        var evenTeams4 = [], oddTeams4 = [];
+        teams4.forEach(function (t, i) {
+          if (i % 2 === 0) evenTeams4.push(t);
+          else oddTeams4.push(t);
+        });
+        var matches4 = [], bad4 = 0;
+        // even 그룹: T[0] vs T[2], T[4] vs T[6]...
+        for (var ei = 0; ei + 1 < evenTeams4.length; ei += 2) {
+          matches4.push(createMatch(evenTeams4[ei], evenTeams4[ei + 1]));
+          if (sameDayTeammates[pairKey(evenTeams4[ei][0], evenTeams4[ei][1])]) bad4++;
+          if (sameDayTeammates[pairKey(evenTeams4[ei + 1][0], evenTeams4[ei + 1][1])]) bad4++;
+        }
+        // odd 그룹: T[1] vs T[3], T[5] vs T[7]...
+        for (var oi = 0; oi + 1 < oddTeams4.length; oi += 2) {
+          matches4.push(createMatch(oddTeams4[oi], oddTeams4[oi + 1]));
+          if (sameDayTeammates[pairKey(oddTeams4[oi][0], oddTeams4[oi][1])]) bad4++;
+          if (sameDayTeammates[pairKey(oddTeams4[oi + 1][0], oddTeams4[oi + 1][1])]) bad4++;
+        }
+        // 나머지 짝 없는 팀끼리 매치
+        var leftover4 = [];
+        if (evenTeams4.length % 2 !== 0) leftover4.push(evenTeams4[evenTeams4.length - 1]);
+        if (oddTeams4.length % 2 !== 0) leftover4.push(oddTeams4[oddTeams4.length - 1]);
+        for (var li = 0; li + 1 < leftover4.length; li += 2) {
+          matches4.push(createMatch(leftover4[li], leftover4[li + 1]));
+          if (sameDayTeammates[pairKey(leftover4[li][0], leftover4[li][1])]) bad4++;
+          if (sameDayTeammates[pairKey(leftover4[li + 1][0], leftover4[li + 1][1])]) bad4++;
         }
         if (bad4 < bestBad4) {
           best = { matches: matches4, waiting: waiterIds };
           bestBad4 = bad4;
         }
       });
-
-    } else {
-      // 5번째 게임: 4번째 대기인원 복귀 + shifted pairing [1위+2꼴찌] vs [2위+3꼴찌] ...
-      // 마지막 매치에 제외했던 꼴찌 추가 → 전원 출전 보장
-      var game4WaiterSet = {};
-      (prevWaiting || []).forEach(function (id) { game4WaiterSet[id] = true; });
-
-      var sorted5 = enriched.slice().sort(function (a, b) {
-        var s = b.score - a.score;
-        return s !== 0 ? s : (Math.random() - 0.5);
-      });
-
-      // 4번째 게임 출전 인원 중 하위 waitingCount명이 5번째 게임 대기
-      var game4Active5 = sorted5.filter(function (p) { return !game4WaiterSet[p.userId]; });
-      var game5WaiterCount = waitingCount;
-      var game5WaitersArr = game4Active5.length >= game5WaiterCount
-        ? game4Active5.slice(game4Active5.length - game5WaiterCount).map(function (p) { return p.userId; })
-        : game4Active5.map(function (p) { return p.userId; });
-      var game5WaiterSet = {};
-      game5WaitersArr.forEach(function (id) { game5WaiterSet[id] = true; });
-
-      // 5번째 게임 출전 = 전체 중 game5 대기 제외 (4번째 대기인원은 포함)
-      var game5Active = sorted5.filter(function (p) { return !game5WaiterSet[p.userId]; });
-      var M5 = game5Active.length;
-      var matches5 = [];
-
-      if (M5 >= 4) {
-        // right = M5-2: 꼴찌(M5-1)는 마지막 매치에 별도 배정
-        var left5 = 0, right5 = M5 - 2;
-        while (left5 + 3 <= right5) {
-          matches5.push(createMatch(
-            [game5Active[left5].userId, game5Active[right5].userId],
-            [game5Active[left5 + 1].userId, game5Active[right5 - 1].userId]
-          ));
-          left5 += 2;
-          right5 -= 2;
-        }
-        // 마지막 매치: 남은 3명 + 꼴찌(game5Active[M5-1])
-        matches5.push(createMatch(
-          [game5Active[left5].userId, game5Active[right5].userId],
-          [game5Active[left5 + 1].userId, game5Active[M5 - 1].userId]
-        ));
-      }
-
-      best = { matches: matches5, waiting: game5WaitersArr };
     }
 
     if (!best) {
