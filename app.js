@@ -299,7 +299,7 @@
           return;
         }
         var m = game.matches[ar.matchIdx];
-        if (!m.team1 || !m.team2 || !ar.winner) {
+        if (!m.team1 || !m.team2 || (ar.winner !== 0 && !ar.winner)) {
           console.log('rebuildHeadToHeadFromEvents - 경기 데이터 불완전:', m);
           return;
         }
@@ -1546,9 +1546,10 @@
     const dateKey = getDateKey(state.selectedDate);
     const ev = state.events[dateKey] || {};
     var isPast = isPastDate(dateKey);
-    var readOnly = isPast || (ev.appliedMatchResults && ev.appliedMatchResults.length > 0);
+    var resultReadOnly = !!(ev.appliedMatchResults && ev.appliedMatchResults.length > 0);
+    var readOnly = resultReadOnly;  // 결과 등록은 한 번만 허용 (이전 날짜도 미등록 시 가능)
 
-    document.getElementById('bracket-title').textContent = dateKey + ' 대진표' + (readOnly ? ' (보기)' : '');
+    document.getElementById('bracket-title').textContent = dateKey + ' 대진표' + (isPast || readOnly ? ' (보기)' : '');
 
     const brackets = buildFullBracket(dateKey);
     var duplicateTeamMap = buildDuplicateTeamMap(brackets);
@@ -1574,13 +1575,13 @@
     }
 
     var attendCount = (ev.participants || []).filter(function (p) { return p.attend; }).length;
-    var availableGame1 = readOnly ? 0 : getParticipantsForGame(dateKey, 1).length;
-    if (!readOnly && attendCount < 4) {
+    var availableGame1 = (isPast || readOnly) ? 0 : getParticipantsForGame(dateKey, 1).length;
+    if (!isPast && !readOnly && attendCount < 4) {
       var notice = document.createElement('div');
       notice.className = 'bracket-notice';
       notice.innerHTML = '참여 체크한 인원이 4명 이상이어야 대진이 생성됩니다. (현재 ' + attendCount + '명) 이전 화면에서 참여 여부를 확인해 주세요.';
       container.appendChild(notice);
-    } else if (!readOnly && totalMatchesInBrackets === 0 && attendCount >= 4) {
+    } else if (!isPast && !readOnly && totalMatchesInBrackets === 0 && attendCount >= 4) {
       var notice2 = document.createElement('div');
       notice2.className = 'bracket-notice';
       notice2.innerHTML = '참여는 ' + attendCount + '명인데, 게임 1회차에 참가 가능한 인원이 ' + availableGame1 + '명입니다. 각자 체크인·체크아웃 게임을 확인해 주세요.';
@@ -1610,13 +1611,25 @@
         const team2Score = computeTeamScore(match.team2);
         const team1GroupLabel = formatGroupLabel((match.groupInfo && match.groupInfo.team1Group) || '');
         const team2GroupLabel = formatGroupLabel((match.groupInfo && match.groupInfo.team2Group) || '');
-        function applyWinner(w) {
-          match.winner = w;
+        function applyWinner(clickedTeam) {
+          // 토글: 같은 팀 클릭 = 해제, 반대 팀 클릭 = 비김, 빈 상태 클릭 = 선택
+          var current = match.winner;
+          var newWinner;
+          if (current === null || current === undefined) {
+            newWinner = clickedTeam;
+          } else if (current === clickedTeam) {
+            newWinner = null;
+          } else if (current === 0) {
+            newWinner = clickedTeam === 1 ? 2 : 1;
+          } else {
+            newWinner = 0; // 반대 팀도 선택 → 비김
+          }
+          match.winner = newWinner;
           ev.matchResults = ev.matchResults || [];
           var idx = ev.matchResults.findIndex(function (r) {
             return r.gameIndex === b.gameIndex && r.matchIdx === mi;
           });
-          if (match.winner) {
+          if (match.winner !== null && match.winner !== undefined) {
             if (idx >= 0) ev.matchResults[idx] = { gameIndex: b.gameIndex, matchIdx: mi, winner: match.winner };
             else ev.matchResults.push({ gameIndex: b.gameIndex, matchIdx: mi, winner: match.winner });
           } else {
@@ -1626,11 +1639,11 @@
           renderBracket();
         }
         const box1 = document.createElement('div');
-        box1.className = 'team-box' + (winner === 1 ? ' winner' : '');
+        box1.className = 'team-box' + (winner === 1 ? ' winner' : winner === 0 ? ' draw' : '');
         box1.innerHTML = '<div class="team-label">팀1</div><div class="member">' + team1.replace(/ \/ /g, '<br>') + '</div>';
         if (!readOnly) {
           box1.style.cursor = 'pointer';
-          box1.title = '클릭하면 팀1 승리로 선택됩니다';
+          box1.title = '클릭: 팀1 승 | 팀2도 선택 시 비김';
           box1.addEventListener('click', function () { applyWinner(1); });
         }
         if (duplicateTeamMap[b.gameIndex + ':' + mi + ':1']) {
@@ -1643,11 +1656,11 @@
         box1.dataset.teamScore = team1Score;
         if (team1GroupLabel) box1.dataset.teamGroup = team1GroupLabel;
         const box2 = document.createElement('div');
-        box2.className = 'team-box' + (winner === 2 ? ' winner' : '');
+        box2.className = 'team-box' + (winner === 2 ? ' winner' : winner === 0 ? ' draw' : '');
         box2.innerHTML = '<div class="team-label">팀2</div><div class="member">' + team2.replace(/ \/ /g, '<br>') + '</div>';
         if (!readOnly) {
           box2.style.cursor = 'pointer';
-          box2.title = '클릭하면 팀2 승리로 선택됩니다';
+          box2.title = '클릭: 팀2 승 | 팀1도 선택 시 비김';
           box2.addEventListener('click', function () { applyWinner(2); });
         }
         if (duplicateTeamMap[b.gameIndex + ':' + mi + ':2']) {
@@ -1666,18 +1679,18 @@
         resultDiv.className = 'result-input';
         resultDiv.style.gridColumn = '1 / -1';
         if (readOnly) {
-          resultDiv.appendChild(document.createTextNode('승자: ' + (winner === 1 ? '팀1' : winner === 2 ? '팀2' : '-')));
+          resultDiv.appendChild(document.createTextNode('결과: ' + (winner === 1 ? '팀1 승' : winner === 2 ? '팀2 승' : winner === 0 ? '비김' : '-')));
         } else {
           const sel = document.createElement('select');
-          sel.innerHTML = '<option value="">승자 선택</option><option value="1">팀1 승</option><option value="2">팀2 승</option>';
-          if (match.winner) sel.value = String(match.winner);
+          sel.innerHTML = '<option value="">승자 선택</option><option value="1">팀1 승</option><option value="2">팀2 승</option><option value="0">비김</option>';
+          if (match.winner !== null && match.winner !== undefined) sel.value = String(match.winner);
           sel.addEventListener('change', function () {
-            match.winner = sel.value ? parseInt(sel.value, 10) : null;
+            match.winner = sel.value !== '' ? parseInt(sel.value, 10) : null;
             ev.matchResults = ev.matchResults || [];
             var idx = ev.matchResults.findIndex(function (r) {
               return r.gameIndex === b.gameIndex && r.matchIdx === mi;
             });
-            if (match.winner) {
+            if (match.winner !== null && match.winner !== undefined) {
               if (idx >= 0) ev.matchResults[idx] = { gameIndex: b.gameIndex, matchIdx: mi, winner: match.winner };
               else ev.matchResults.push({ gameIndex: b.gameIndex, matchIdx: mi, winner: match.winner });
             } else {
@@ -1686,7 +1699,7 @@
             saveState();
             renderBracket();
           });
-          resultDiv.appendChild(document.createElement('label')).textContent = '승자: ';
+          resultDiv.appendChild(document.createElement('label')).textContent = '결과: ';
           resultDiv.appendChild(sel);
         }
         matchesDiv.appendChild(resultDiv);
@@ -1705,7 +1718,7 @@
     var filledCount = 0;
     brackets.forEach(function (b) {
       (b.matches || []).forEach(function (match) {
-        if (match.winner === 1 || match.winner === 2) filledCount++;
+        if (match.winner === 1 || match.winner === 2 || match.winner === 0) filledCount++;
       });
     });
     var btnRegister = document.getElementById('btn-register-results');
@@ -1717,11 +1730,11 @@
         btnRegister.disabled = totalMatches === 0;
         var registerHint = document.getElementById('register-results-hint');
         if (registerHint) {
-          registerHint.textContent = totalMatches === 0 ? '' : '팀을 클릭하거나 아래에서 승자를 선택한 뒤, 결과 등록을 누르면 확인 후 반영됩니다. (현재 ' + filledCount + '/' + totalMatches + ' 경기 선택됨)';
+          registerHint.textContent = totalMatches === 0 ? '' : '팀 클릭: 한 쪽=승리, 양쪽=비김. 비김 시 점수 합이 낮은 팀이 +1점. (현재 ' + filledCount + '/' + totalMatches + ' 경기 선택됨)';
         }
         btnRegister.onclick = function () {
           if (btnRegister.disabled) return;
-          var toApply = (ev.matchResults || []).filter(function (r) { return r.winner === 1 || r.winner === 2; });
+          var toApply = (ev.matchResults || []).filter(function (r) { return r.winner === 1 || r.winner === 2 || r.winner === 0; });
           var msg = toApply.length === 0
             ? '선택된 경기가 없습니다. 팀을 클릭해 승리를 선택한 뒤 다시 시도해 주세요.'
             : '해당 내용(' + toApply.length + '경기)으로 결과를 등록할까요? 선택된 경기만 반영됩니다.';
@@ -1742,8 +1755,15 @@
             var game = snap.find(function (g) { return g.gameIndex === r.gameIndex; });
             if (!game || !game.matches || !game.matches[r.matchIdx]) return;
             var m = game.matches[r.matchIdx];
-            var delta = applyResult({ team1: m.team1, team2: m.team2, winner: r.winner });
-            appliedWithDeltas.push({ gameIndex: r.gameIndex, matchIdx: r.matchIdx, winner: r.winner, scoreDelta: delta });
+            var applyRet = applyResult({ team1: m.team1, team2: m.team2, winner: r.winner });
+            var appliedEntry = { gameIndex: r.gameIndex, matchIdx: r.matchIdx, winner: r.winner };
+            if (typeof applyRet === 'object' && applyRet !== null) {
+              appliedEntry.scoreDelta = applyRet.delta;
+              appliedEntry.drawScoredTeam = applyRet.drawScoredTeam;
+            } else {
+              appliedEntry.scoreDelta = applyRet;
+            }
+            appliedWithDeltas.push(appliedEntry);
           });
           ev.appliedMatchResults = appliedWithDeltas;
           rebuildMatchScoresFromAppliedResults();
@@ -1763,7 +1783,30 @@
   }
 
   function revertResult(match) {
-    if (!match.winner || (match.winner !== 1 && match.winner !== 2)) return;
+    if (match.winner !== 0 && match.winner !== 1 && match.winner !== 2) return;
+
+    if (match.winner === 0) {
+      // 비김 되돌리기: 점수를 받았던 팀에서 1점씩 차감
+      var scoredTeam = match.drawScoredTeam === 1 ? match.team1 : match.team2;
+      scoredTeam.forEach(function (id) {
+        state.matchScores[id] = (state.matchScores[id] || 0) - 1;
+      });
+      updateTotalScores();
+      match.team1.concat(match.team2).forEach(function (id) {
+        if (state.matchWins[id]) {
+          state.matchWins[id].draws = Math.max(0, (state.matchWins[id].draws || 0) - 1);
+        }
+      });
+      match.team1.forEach(function (w) {
+        match.team2.forEach(function (l) {
+          var key = pairKey(w, l);
+          var h = state.headToHead[key];
+          if (h) h.draws = Math.max(0, (h.draws || 0) - 1);
+        });
+      });
+      return;
+    }
+
     const winners = match.winner === 1 ? match.team1 : match.team2;
     const losers = match.winner === 1 ? match.team2 : match.team1;
 
@@ -1809,7 +1852,32 @@
   }
 
   function applyResult(match) {
-    if (!match.winner || (match.winner !== 1 && match.winner !== 2)) return;
+    if (match.winner !== 0 && match.winner !== 1 && match.winner !== 2) return 0;
+
+    if (match.winner === 0) {
+      // 비김: 점수 합이 낮은(또는 같은) 팀에 각자 1점
+      var t1sum = match.team1.reduce(function (s, id) { return s + (state.scores[id] || 0); }, 0);
+      var t2sum = match.team2.reduce(function (s, id) { return s + (state.scores[id] || 0); }, 0);
+      var drawScoredTeamNum = t1sum <= t2sum ? 1 : 2;
+      var scoredTeam = drawScoredTeamNum === 1 ? match.team1 : match.team2;
+      scoredTeam.forEach(function (id) {
+        state.matchScores[id] = (state.matchScores[id] || 0) + 1;
+      });
+      updateTotalScores();
+      match.team1.concat(match.team2).forEach(function (id) {
+        if (!state.matchWins[id]) state.matchWins[id] = { wins: 0, losses: 0, draws: 0 };
+        state.matchWins[id].draws = (state.matchWins[id].draws || 0) + 1;
+      });
+      match.team1.forEach(function (w) {
+        match.team2.forEach(function (l) {
+          var key = pairKey(w, l);
+          if (!state.headToHead[key]) state.headToHead[key] = { wins1: 0, wins2: 0, draws: 0 };
+          state.headToHead[key].draws = (state.headToHead[key].draws || 0) + 1;
+        });
+      });
+      return { delta: 1, drawScoredTeam: drawScoredTeamNum };
+    }
+
     const winners = match.winner === 1 ? match.team1 : match.team2;
     const losers = match.winner === 1 ? match.team2 : match.team1;
 
@@ -1887,6 +1955,15 @@
         if (!game || !game.matches || !game.matches[ar.matchIdx]) return;
         var m = game.matches[ar.matchIdx];
         if (!m.team1 || !m.team2) return;
+        if (ar.winner === 0) {
+          // 비김: drawScoredTeam 팀에 1점씩 복원
+          var scoredTeam = ar.drawScoredTeam === 1 ? m.team1 : m.team2;
+          scoredTeam.forEach(function (id) {
+            state.matchScores[id] = (state.matchScores[id] || 0) + 1;
+          });
+          return;
+        }
+        if (ar.winner !== 1 && ar.winner !== 2) return;
         var winners = ar.winner === 1 ? m.team1 : m.team2;
         var losers = ar.winner === 1 ? m.team2 : m.team1;
         var delta = ar.scoreDelta || 1;
@@ -1902,14 +1979,14 @@
   }
 
   function getWinsLosses(userId) {
-    // 경기당 승패 기록 사용 (경기당 1승/1패만 기록)
     if (state.matchWins && state.matchWins[userId]) {
       return {
         wins: state.matchWins[userId].wins || 0,
-        losses: state.matchWins[userId].losses || 0
+        losses: state.matchWins[userId].losses || 0,
+        draws: state.matchWins[userId].draws || 0
       };
     }
-    return { wins: 0, losses: 0 };
+    return { wins: 0, losses: 0, draws: 0 };
   }
 
   // 정렬 함수: 점수 순 > 이름 가나다 순
@@ -1935,10 +2012,8 @@
     updateTotalScores();
     const list = state.users.map(function (u) {
       const wl = getWinsLosses(u.id);
-      const total = wl.wins + wl.losses;
+      const total = wl.wins + wl.losses + wl.draws;
       const rateStr = total > 0 ? (wl.wins / total * 100).toFixed(1) + '%' : '-';
-      const baseScore = state.baseScores[u.id] || 0;
-      const matchScore = state.matchScores[u.id] || 0;
       const totalScore = state.scores[u.id] || 0;
       return {
         id: u.id,
@@ -1947,15 +2022,17 @@
         score: totalScore,
         wins: wl.wins,
         losses: wl.losses,
+        draws: wl.draws,
         rateStr: rateStr
       };
     });
     list.sort(sortUsersByGradeScoreName);
     list.forEach(function (item) {
-      const totalGames = item.wins + item.losses;
+      const totalGames = item.wins + item.losses + item.draws;
       const gamesStr = totalGames > 0 ? '총 ' + totalGames + '경기 ' : '';
+      const drawsStr = item.draws > 0 ? ' ' + item.draws + '무' : '';
       const li = document.createElement('li');
-      li.innerHTML = '<span class="name">' + item.name + ' <small>(' + item.score + '점)</small></span><span class="score">' + gamesStr + item.wins + '승 ' + item.losses + '패 (승률 ' + item.rateStr + ')</span>';
+      li.innerHTML = '<span class="name">' + item.name + ' <small>(' + item.score + '점)</small></span><span class="score">' + gamesStr + item.wins + '승' + drawsStr + ' ' + item.losses + '패 (승률 ' + item.rateStr + ')</span>';
       li.addEventListener('click', function () {
         state.vsUserId = item.id;
         document.querySelector('#stats-vs .vs-select select').value = item.id;

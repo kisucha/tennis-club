@@ -408,6 +408,11 @@ body {
   background: #e8f8f0;
 }
 
+.team-box.draw {
+  border-color: var(--accent);
+  background: #fdf5e0;
+}
+
 .team-box .team-label {
   font-size: 0.75rem;
   color: var(--text-muted);
