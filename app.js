@@ -605,8 +605,9 @@
     return { team1: best[0], team2: best[1] };
   }
 
-  function buildBracketForGame(dateKey, gameIndex, sameDayTeammates, prevWaiting, alreadyWaited) {
+  function buildBracketForGame(dateKey, gameIndex, sameDayTeammates, prevWaiting, alreadyWaited, lastWaitedGame) {
     alreadyWaited = alreadyWaited || {};
+    lastWaitedGame = lastWaitedGame || {};
     var participants = getParticipantsForGame(dateKey, gameIndex);
 
     if (participants.length < 4) {
@@ -646,11 +647,14 @@
       groupB.forEach(function (p) { groupAssignments[p.userId] = 'B'; });
 
       function buildOnceAB() {
-        // 대기자 우선순위: 대기 횟수 적은 사람 먼저, 횟수 동일하면 랜덤
+        // 대기자 우선순위: 1) 대기 횟수 적은 순, 2) 마지막으로 쉰 게임이 이른 순 (연속 대기 방지), 3) 랜덤
         var byWaitCount = enriched.slice().sort(function (a, b) {
           var wa = alreadyWaited[a.userId] || 0;
           var wb = alreadyWaited[b.userId] || 0;
           if (wa !== wb) return wa - wb;
+          var la = lastWaitedGame[a.userId] || 0;
+          var lb = lastWaitedGame[b.userId] || 0;
+          if (la !== lb) return la - lb; // 더 일찍 쉰 사람이 먼저 다시 대기
           return Math.random() - 0.5;
         });
         var waiters = byWaitCount.slice(0, waitingCount).map(function (p) { return p.userId; });
@@ -727,6 +731,12 @@
       if (bestBad > 0 && waitingCount === 1) {
         var minWcAlt = enriched.reduce(function (m, p) { return Math.min(m, alreadyWaited[p.userId] || 0); }, Infinity);
         var altCandidates = enriched.filter(function (p) { return (alreadyWaited[p.userId] || 0) <= minWcAlt + 1; });
+        altCandidates.sort(function (a, b) {
+          var wa = alreadyWaited[a.userId] || 0, wb = alreadyWaited[b.userId] || 0;
+          if (wa !== wb) return wa - wb;
+          var la = lastWaitedGame[a.userId] || 0, lb = lastWaitedGame[b.userId] || 0;
+          return la - lb;
+        });
         altCandidates.forEach(function (forceP) {
           if (bestBad === 0) return;
           var forceSet = {};
@@ -783,11 +793,14 @@
         var s = b.score - a.score;
         return s !== 0 ? s : 0;
       });
-      // 대기 후보: 최소 대기 횟수 기준 정렬, 동일하면 점수 낮은 순
+      // 대기 후보: 1) 대기 횟수 적은 순, 2) 마지막으로 쉰 게임이 이른 순 (연속 대기 방지), 3) 점수 낮은 순
       var sorted4waiters = enriched.slice().sort(function (a, b) {
         var wa = alreadyWaited[a.userId] || 0;
         var wb = alreadyWaited[b.userId] || 0;
         if (wa !== wb) return wa - wb;
+        var la = lastWaitedGame[a.userId] || 0;
+        var lb = lastWaitedGame[b.userId] || 0;
+        if (la !== lb) return la - lb;
         return a.score - b.score;
       });
       var minWait4 = alreadyWaited[sorted4waiters[0].userId] || 0;
@@ -920,15 +933,19 @@
 
     const result = [];
     var prevGameWaiting = null;
-    var alreadyWaited = {};  // 이전 게임에서 한 번이라도 대기한 사람 누적
+    var alreadyWaited = {};   // userId → 누적 대기 횟수
+    var lastWaitedGame = {};  // userId → 마지막으로 쉰 게임 번호 (낮을수록 오래 전에 쉰 것)
     for (let g = 1; g <= TOTAL_GAMES; g++) {
-      const br = buildBracketForGame(dateKey, g, sameDayTeammates, prevGameWaiting, alreadyWaited);
+      const br = buildBracketForGame(dateKey, g, sameDayTeammates, prevGameWaiting, alreadyWaited, lastWaitedGame);
       result.push({
         gameIndex: g,
         matches: br.matches,
         waiting: br.waiting
       });
-      (br.waiting || []).forEach(function (id) { alreadyWaited[id] = (alreadyWaited[id] || 0) + 1; });
+      (br.waiting || []).forEach(function (id) {
+        alreadyWaited[id] = (alreadyWaited[id] || 0) + 1;
+        lastWaitedGame[id] = g;
+      });
       if (g === GAMES_BY_GRADE + 1) {
         prevGameWaiting = br.waiting;
       }
