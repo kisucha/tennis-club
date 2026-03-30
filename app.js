@@ -865,7 +865,7 @@
       }
 
     } else {
-      // 4번째 게임: [1위+꼴찌], [2위+꼴찌-1]... 팀 구성 후 홀짝 매치
+      // 4번째 게임: [1위+꼴찌-1], [2위+꼴찌-2]... 팀 구성 후 홀짝 매치 (꼴찌는 중간 순위자와 팀)
       // 홀수(인덱스 0,2,4...) 팀끼리, 짝수(인덱스 1,3,5...) 팀끼리 → 1위팀과 2위팀이 붙지 않음
       // 대기 후보: 1) 대기 횟수 적은 순, 2) 마지막으로 쉰 게임이 이른 순, 3) 점수 낮은 순
       var sorted4waiters = enriched.slice().sort(function (a, b) {
@@ -894,12 +894,16 @@
         var active4 = enriched.filter(function (p) { return !waiterSet4[p.userId]; })
           .slice().sort(function (a, b) { return b.score - a.score; });
         var N4 = active4.length;
-        // [1위+꼴찌], [2위+꼴찌-1], ... 팀 구성
+        // [1위+꼴찌-1], [2위+꼴찌-2], ... 팀 구성 (꼴찌는 중간 순위자와 팀)
         var teams4 = [];
-        var lo4 = 0, hi4 = N4 - 1;
+        var lo4 = 0, hi4 = N4 - 2;
         while (lo4 < hi4) {
           teams4.push([active4[lo4].userId, active4[hi4].userId]);
           lo4++; hi4--;
+        }
+        // 남은 중간 순위자와 꼴찌를 팀으로 구성
+        if (lo4 === hi4) {
+          teams4.push([active4[lo4].userId, active4[N4 - 1].userId]);
         }
         // 홀짝 분리: 인덱스 0,2,4...와 1,3,5...로 나눠 각각 매치
         var evenTeams4 = [], oddTeams4 = [];
