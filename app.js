@@ -723,36 +723,106 @@
         if (bestBad === 0) break;
       }
 
+      // 120회 시도 후에도 중복이 있으면 최소+1 대기 횟수 후보로도 시도 (waitingCount=1 한정)
+      if (bestBad > 0 && waitingCount === 1) {
+        var minWcAlt = enriched.reduce(function (m, p) { return Math.min(m, alreadyWaited[p.userId] || 0); }, Infinity);
+        var altCandidates = enriched.filter(function (p) { return (alreadyWaited[p.userId] || 0) <= minWcAlt + 1; });
+        altCandidates.forEach(function (forceP) {
+          if (bestBad === 0) return;
+          var forceSet = {};
+          forceSet[forceP.userId] = true;
+          var fA = shuffle(groupA.filter(function (p) { return !forceSet[p.userId]; }));
+          var fB = shuffle(groupB.filter(function (p) { return !forceSet[p.userId]; }));
+          for (var ft = 0; ft < 20; ft++) {
+            var fAp = shuffle(fA.slice()), fBp = shuffle(fB.slice());
+            var fMatches = [], fBad = 0, fLocal = Object.assign({}, sameDayTeammates);
+            while (fAp.length >= 4) {
+              var four = fAp.splice(0, 4).map(function (p) { return p.userId; });
+              var spl = splitIntoTeams(four, fLocal, undefined);
+              fMatches.push(createMatch(spl.team1, spl.team2));
+              var k1 = pairKey(spl.team1[0], spl.team1[1]);
+              var k2 = pairKey(spl.team2[0], spl.team2[1]);
+              if (sameDayTeammates[k1]) fBad++;
+              if (sameDayTeammates[k2]) fBad++;
+              fLocal[k1] = true; fLocal[k2] = true;
+            }
+            if (fAp.length > 0 && fBp.length >= 4 - fAp.length) {
+              var needed = 4 - fAp.length;
+              var fromBf = fBp.splice(0, needed);
+              var four = shuffle(fAp.map(function (p) { return p.userId; }).concat(fromBf.map(function (p) { return p.userId; })));
+              var spl = splitIntoTeams(four, fLocal, undefined);
+              fMatches.push(createMatch(spl.team1, spl.team2));
+              var k1 = pairKey(spl.team1[0], spl.team1[1]);
+              var k2 = pairKey(spl.team2[0], spl.team2[1]);
+              if (sameDayTeammates[k1]) fBad++;
+              if (sameDayTeammates[k2]) fBad++;
+              fLocal[k1] = true; fLocal[k2] = true;
+              fAp = [];
+            }
+            while (fBp.length >= 4) {
+              var four = fBp.splice(0, 4).map(function (p) { return p.userId; });
+              var spl = splitIntoTeams(four, fLocal, undefined);
+              fMatches.push(createMatch(spl.team1, spl.team2));
+              var k1 = pairKey(spl.team1[0], spl.team1[1]);
+              var k2 = pairKey(spl.team2[0], spl.team2[1]);
+              if (sameDayTeammates[k1]) fBad++;
+              if (sameDayTeammates[k2]) fBad++;
+              fLocal[k1] = true; fLocal[k2] = true;
+            }
+            if (fBad < bestBad) {
+              best = { matches: fMatches, waiting: [forceP.userId], badPairs: fBad };
+              bestBad = fBad;
+            }
+          }
+        });
+      }
+
     } else if (gameIndex === GAMES_BY_GRADE + 1) {
-      // 4번째 게임: 점수 내림차순 정렬 후 [1위+꼴찌] vs [2위+2꼴찌], [3위+3꼴찌] vs [4위+4꼴찌] ... 방식
+      // 4번째 게임: 점수 내림차순 정렬 후 [1위+꼴찌] vs [2위+2꼴찌] 방식
       var sorted4 = enriched.slice().sort(function (a, b) {
         var s = b.score - a.score;
-        return s !== 0 ? s : (Math.random() - 0.5);
+        return s !== 0 ? s : 0;
       });
-      var activeCount4 = n - waitingCount;
-      // 대기자 우선순위: 대기 횟수 적은 사람 먼저, 횟수 동일하면 점수 낮은 순
+      // 대기 후보: 최소 대기 횟수 기준 정렬, 동일하면 점수 낮은 순
       var sorted4waiters = enriched.slice().sort(function (a, b) {
         var wa = alreadyWaited[a.userId] || 0;
         var wb = alreadyWaited[b.userId] || 0;
         if (wa !== wb) return wa - wb;
         return a.score - b.score;
       });
-      var waiters4 = sorted4waiters.slice(0, waitingCount).map(function (p) { return p.userId; });
-      var waiterSet4 = {};
-      waiters4.forEach(function (id) { waiterSet4[id] = true; });
-      var active4 = sorted4.filter(function (p) { return !waiterSet4[p.userId]; });
-      var matches4 = [];
-      var left4 = 0, right4 = activeCount4 - 1;
-      while (left4 < right4) {
-        // [1위+꼴찌] vs [2위+2꼴찌] 순으로 팀 구성
-        matches4.push(createMatch(
-          [active4[left4].userId, active4[right4].userId],
-          [active4[left4 + 1].userId, active4[right4 - 1].userId]
-        ));
-        left4 += 2;
-        right4 -= 2;
-      }
-      best = { matches: matches4, waiting: waiters4 };
+      var minWait4 = alreadyWaited[sorted4waiters[0].userId] || 0;
+      // 최소 대기 횟수 +1까지 허용하여 중복 팀 방지 가능 후보 탐색
+      var eligibleW4 = sorted4waiters.filter(function (p) {
+        return (alreadyWaited[p.userId] || 0) <= minWait4 + 1;
+      });
+      // waitingCount=1이면 각 후보를 순서대로 시도, 아니면 상위 waitingCount명
+      var waiterCombos4 = waitingCount === 1
+        ? eligibleW4.map(function (p) { return [p.userId]; })
+        : [sorted4waiters.slice(0, waitingCount).map(function (p) { return p.userId; })];
+
+      var bestBad4 = 999;
+      waiterCombos4.forEach(function (waiterIds) {
+        if (bestBad4 === 0) return;
+        var waiterSet4 = {};
+        waiterIds.forEach(function (id) { waiterSet4[id] = true; });
+        var active4 = sorted4.filter(function (p) { return !waiterSet4[p.userId]; });
+        var matches4 = [];
+        var bad4 = 0;
+        var left4 = 0, right4 = active4.length - 1;
+        while (left4 < right4) {
+          var t1 = [active4[left4].userId, active4[right4].userId];
+          var t2 = [active4[left4 + 1].userId, active4[right4 - 1].userId];
+          matches4.push(createMatch(t1, t2));
+          if (sameDayTeammates[pairKey(t1[0], t1[1])]) bad4++;
+          if (sameDayTeammates[pairKey(t2[0], t2[1])]) bad4++;
+          left4 += 2;
+          right4 -= 2;
+        }
+        if (bad4 < bestBad4) {
+          best = { matches: matches4, waiting: waiterIds };
+          bestBad4 = bad4;
+        }
+      });
 
     } else {
       // 5번째 게임: 4번째 대기인원 복귀 + shifted pairing [1위+2꼴찌] vs [2위+3꼴찌] ...
