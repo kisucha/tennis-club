@@ -1601,14 +1601,14 @@
     } else if (!isPast && !readOnly && totalMatchesInBrackets === 0 && attendCount >= 4) {
       var notice2 = document.createElement('div');
       notice2.className = 'bracket-notice';
-      notice2.innerHTML = '참여는 ' + attendCount + '명인데, 게임 1회차에 참가 가능한 인원이 ' + availableGame1 + '명입니다. 각자 체크인·체크아웃 게임을 확인해 주세요.';
+      notice2.innerHTML = '참여는 ' + attendCount + '명인데, 1 Round에 참가 가능한 인원이 ' + availableGame1 + '명입니다. 각자 체크인·체크아웃 게임을 확인해 주세요.';
       container.appendChild(notice2);
     }
 
     brackets.forEach(function (b) {
       const card = document.createElement('div');
       card.className = 'game-card';
-      card.innerHTML = '<h3>게임 ' + b.gameIndex + '회차</h3>';
+      card.innerHTML = '<h3>' + b.gameIndex + ' Round</h3>';
       const matchesDiv = document.createElement('div');
       matchesDiv.className = 'teams-row';
 
@@ -1616,7 +1616,7 @@
         var emptyMsg = document.createElement('div');
         emptyMsg.className = 'bracket-empty-msg';
         emptyMsg.style.gridColumn = '1 / -1';
-        emptyMsg.textContent = '이 회차에 참가 가능한 인원이 4명 미만입니다. 체크인·체크아웃 게임을 확인해 주세요.';
+        emptyMsg.textContent = 'This round has less than 4 participants available. Please check your check-in/check-out games.';
         matchesDiv.appendChild(emptyMsg);
       }
 
