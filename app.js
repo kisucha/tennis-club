@@ -40,6 +40,8 @@
   };
 
   var localSnapshot = null;
+  var bracketEditMode = false;
+  var bracketSelectedPlayer = null;
 
   function applyStateData(data) {
     if (!data) return;
@@ -1306,6 +1308,10 @@
   }
 
   function showScreen(id) {
+    if (id !== 'screen-bracket') {
+      bracketEditMode = false;
+      bracketSelectedPlayer = null;
+    }
     function doShow() {
       document.querySelectorAll('.screen').forEach(function (el) {
         el.classList.remove('active');
@@ -1590,6 +1596,44 @@
     }
   }
 
+  function refKey(ref) {
+    if (!ref) return '';
+    if (ref.location === 'waiting') return ref.gameIndex + ':waiting:' + ref.playerIdx;
+    return ref.gameIndex + ':' + ref.matchIdx + ':' + ref.teamKey + ':' + ref.playerIdx;
+  }
+
+  function swapBracketPlayers(src, dst) {
+    var dateKey = getDateKey(state.selectedDate);
+    var ev = state.events[dateKey];
+    if (!ev || !ev.bracketSnapshot) return;
+    function resolveRef(ref) {
+      var game = ev.bracketSnapshot.find(function (g) { return g.gameIndex === ref.gameIndex; });
+      if (!game) return null;
+      if (ref.location === 'waiting') {
+        if (!game.waiting || ref.playerIdx >= game.waiting.length) return null;
+        return { arr: game.waiting, idx: ref.playerIdx };
+      }
+      var match = game.matches && game.matches[ref.matchIdx];
+      if (!match) return null;
+      var arr = match[ref.teamKey];
+      if (!arr || ref.playerIdx >= arr.length) return null;
+      return { arr: arr, idx: ref.playerIdx };
+    }
+    var s = resolveRef(src);
+    var d = resolveRef(dst);
+    if (!s || !d) return;
+    var tmp = s.arr[s.idx];
+    s.arr[s.idx] = d.arr[d.idx];
+    d.arr[d.idx] = tmp;
+    // 교체된 라운드의 경기 결과 선택 초기화
+    var affected = {};
+    affected[src.gameIndex] = true;
+    affected[dst.gameIndex] = true;
+    ev.matchResults = (ev.matchResults || []).filter(function (r) { return !affected[r.gameIndex]; });
+    saveState();
+    renderBracket();
+  }
+
   function buildDuplicateTeamMap(brackets) {
     var seen = {};
     var dup = {};
@@ -1635,6 +1679,29 @@
     const userById = {};
     state.users.forEach(function (u) { userById[u.id] = u; });
 
+    // 편집 모드 버튼 / 배너
+    if (!readOnly && totalMatchesInBrackets > 0) {
+      var editRow = document.createElement('div');
+      editRow.className = 'bracket-edit-btn-row';
+      var editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'btn ' + (bracketEditMode ? 'primary' : 'secondary');
+      editBtn.textContent = bracketEditMode ? '✓ 편집 완료' : '✏ 대진 수동 편집';
+      editBtn.onclick = function () {
+        bracketEditMode = !bracketEditMode;
+        bracketSelectedPlayer = null;
+        renderBracket();
+      };
+      editRow.appendChild(editBtn);
+      container.appendChild(editRow);
+      if (bracketEditMode) {
+        var editBanner = document.createElement('div');
+        editBanner.className = 'edit-mode-banner';
+        editBanner.textContent = '편집 모드: 선수 이름을 클릭하거나 드래그하여 위치를 바꿀 수 있습니다. 두 선수를 순서대로 클릭하면 서로 교체됩니다.';
+        container.appendChild(editBanner);
+      }
+    }
+
     if (isPast && !hasGameData) {
       var noGameMsg = document.createElement('div');
       noGameMsg.className = 'bracket-empty-msg';
@@ -1677,6 +1744,62 @@
         matchesDiv.appendChild(emptyMsg);
       }
 
+      // 플레이어 칩 생성 헬퍼 (편집 모드 전용)
+      function makePlayerChip(userId, ref) {
+        var chip = document.createElement('span');
+        chip.className = 'player-chip';
+        chip.textContent = userById[userId] ? userById[userId].name : userId;
+        chip.draggable = true;
+        var rk = refKey(ref);
+        if (bracketSelectedPlayer && refKey(bracketSelectedPlayer) === rk) {
+          chip.classList.add('selected');
+        }
+        chip.addEventListener('dragstart', function (e) {
+          e.dataTransfer.setData('text/plain', JSON.stringify(ref));
+          e.dataTransfer.effectAllowed = 'move';
+          setTimeout(function () { chip.classList.add('dragging'); }, 0);
+        });
+        chip.addEventListener('dragend', function () {
+          chip.classList.remove('dragging');
+          chip.classList.remove('drag-over');
+        });
+        chip.addEventListener('dragover', function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          e.dataTransfer.dropEffect = 'move';
+          chip.classList.add('drag-over');
+        });
+        chip.addEventListener('dragleave', function () {
+          chip.classList.remove('drag-over');
+        });
+        chip.addEventListener('drop', function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          chip.classList.remove('drag-over');
+          try {
+            var srcRef = JSON.parse(e.dataTransfer.getData('text/plain'));
+            if (refKey(srcRef) !== rk) { swapBracketPlayers(srcRef, ref); }
+          } catch (ex) {}
+        });
+        chip.addEventListener('click', function (e) {
+          e.stopPropagation();
+          if (bracketSelectedPlayer && refKey(bracketSelectedPlayer) === rk) {
+            bracketSelectedPlayer = null;
+            renderBracket();
+            return;
+          }
+          if (bracketSelectedPlayer) {
+            var src = bracketSelectedPlayer;
+            bracketSelectedPlayer = null;
+            swapBracketPlayers(src, ref);
+            return;
+          }
+          bracketSelectedPlayer = ref;
+          renderBracket();
+        });
+        return chip;
+      }
+
       b.matches.forEach(function (match, mi) {
         const team1 = match.team1.map(function (id) { return userById[id] ? userById[id].name : id; }).join(' / ');
         const team2 = match.team2.map(function (id) { return userById[id] ? userById[id].name : id; }).join(' / ');
@@ -1686,6 +1809,7 @@
         const team1GroupLabel = formatGroupLabel((match.groupInfo && match.groupInfo.team1Group) || '');
         const team2GroupLabel = formatGroupLabel((match.groupInfo && match.groupInfo.team2Group) || '');
         function applyWinner(clickedTeam) {
+          if (bracketEditMode) return; // 편집 모드에서는 승자 선택 비활성
           // 토글: 같은 팀 클릭 = 해제, 반대 팀 클릭 = 비김, 빈 상태 클릭 = 선택
           var current = match.winner;
           var newWinner;
@@ -1714,11 +1838,24 @@
         }
         const box1 = document.createElement('div');
         box1.className = 'team-box' + (winner === 1 ? ' winner' : winner === 0 ? ' draw' : '');
-        box1.innerHTML = '<div class="team-label">팀1</div><div class="member">' + team1.replace(/ \/ /g, '<br>') + '</div>';
-        if (!readOnly) {
-          box1.style.cursor = 'pointer';
-          box1.title = '클릭: 팀1 승 | 팀2도 선택 시 비김';
-          box1.addEventListener('click', function () { applyWinner(1); });
+        if (bracketEditMode) {
+          var lbl1 = document.createElement('div');
+          lbl1.className = 'team-label';
+          lbl1.textContent = '팀1';
+          box1.appendChild(lbl1);
+          var membersDiv1 = document.createElement('div');
+          membersDiv1.className = 'team-members-edit';
+          match.team1.forEach(function (uid, pi) {
+            membersDiv1.appendChild(makePlayerChip(uid, { gameIndex: b.gameIndex, location: 'team', matchIdx: mi, teamKey: 'team1', playerIdx: pi }));
+          });
+          box1.appendChild(membersDiv1);
+        } else {
+          box1.innerHTML = '<div class="team-label">팀1</div><div class="member">' + team1.replace(/ \/ /g, '<br>') + '</div>';
+          if (!readOnly) {
+            box1.style.cursor = 'pointer';
+            box1.title = '클릭: 팀1 승 | 팀2도 선택 시 비김';
+            box1.addEventListener('click', function () { applyWinner(1); });
+          }
         }
         if (duplicateTeamMap[b.gameIndex + ':' + mi + ':1']) {
           var dupTag1 = document.createElement('span');
@@ -1731,11 +1868,24 @@
         if (team1GroupLabel) box1.dataset.teamGroup = team1GroupLabel;
         const box2 = document.createElement('div');
         box2.className = 'team-box' + (winner === 2 ? ' winner' : winner === 0 ? ' draw' : '');
-        box2.innerHTML = '<div class="team-label">팀2</div><div class="member">' + team2.replace(/ \/ /g, '<br>') + '</div>';
-        if (!readOnly) {
-          box2.style.cursor = 'pointer';
-          box2.title = '클릭: 팀2 승 | 팀1도 선택 시 비김';
-          box2.addEventListener('click', function () { applyWinner(2); });
+        if (bracketEditMode) {
+          var lbl2 = document.createElement('div');
+          lbl2.className = 'team-label';
+          lbl2.textContent = '팀2';
+          box2.appendChild(lbl2);
+          var membersDiv2 = document.createElement('div');
+          membersDiv2.className = 'team-members-edit';
+          match.team2.forEach(function (uid, pi) {
+            membersDiv2.appendChild(makePlayerChip(uid, { gameIndex: b.gameIndex, location: 'team', matchIdx: mi, teamKey: 'team2', playerIdx: pi }));
+          });
+          box2.appendChild(membersDiv2);
+        } else {
+          box2.innerHTML = '<div class="team-label">팀2</div><div class="member">' + team2.replace(/ \/ /g, '<br>') + '</div>';
+          if (!readOnly) {
+            box2.style.cursor = 'pointer';
+            box2.title = '클릭: 팀2 승 | 팀1도 선택 시 비김';
+            box2.addEventListener('click', function () { applyWinner(2); });
+          }
         }
         if (duplicateTeamMap[b.gameIndex + ':' + mi + ':2']) {
           var dupTag2 = document.createElement('span');
@@ -1754,7 +1904,7 @@
         resultDiv.style.gridColumn = '1 / -1';
         if (readOnly) {
           resultDiv.appendChild(document.createTextNode('결과: ' + (winner === 1 ? '팀1 승' : winner === 2 ? '팀2 승' : winner === 0 ? '비김' : '-')));
-        } else {
+        } else if (!bracketEditMode) {
           const sel = document.createElement('select');
           sel.innerHTML = '<option value="">승자 선택</option><option value="1">팀1 승</option><option value="2">팀2 승</option><option value="0">비김</option>';
           if (match.winner !== null && match.winner !== undefined) sel.value = String(match.winner);
@@ -1776,12 +1926,24 @@
           resultDiv.appendChild(document.createElement('label')).textContent = '결과: ';
           resultDiv.appendChild(sel);
         }
-        matchesDiv.appendChild(resultDiv);
+        if (!bracketEditMode || readOnly) matchesDiv.appendChild(resultDiv);
       });
       if (b.waiting && b.waiting.length) {
         const waitDiv = document.createElement('div');
         waitDiv.style.gridColumn = '1 / -1';
-        waitDiv.innerHTML = '대기: ' + b.waiting.map(function (id) { return userById[id] ? userById[id].name : id; }).join(', ');
+        if (bracketEditMode) {
+          waitDiv.style.padding = '8px 0 4px 0';
+          var waitLabel = document.createElement('span');
+          waitLabel.textContent = '대기: ';
+          waitLabel.style.fontSize = '0.85rem';
+          waitLabel.style.color = 'var(--text-muted)';
+          waitDiv.appendChild(waitLabel);
+          b.waiting.forEach(function (uid, pi) {
+            waitDiv.appendChild(makePlayerChip(uid, { gameIndex: b.gameIndex, location: 'waiting', playerIdx: pi }));
+          });
+        } else {
+          waitDiv.innerHTML = '대기: ' + b.waiting.map(function (id) { return userById[id] ? userById[id].name : id; }).join(', ');
+        }
         matchesDiv.appendChild(waitDiv);
       }
       card.appendChild(matchesDiv);
@@ -1799,6 +1961,10 @@
     if (btnRegister) {
       if (readOnly) {
         btnRegister.style.display = 'none';
+      } else if (bracketEditMode) {
+        btnRegister.style.display = 'none';
+        var registerHint2 = document.getElementById('register-results-hint');
+        if (registerHint2) registerHint2.textContent = '';
       } else {
         btnRegister.style.display = '';
         btnRegister.disabled = totalMatches === 0;
