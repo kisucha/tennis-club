@@ -1603,6 +1603,8 @@
   }
 
   function swapBracketPlayers(src, dst) {
+    // 같은 라운드 내에서만 교체 허용
+    if (src.gameIndex !== dst.gameIndex) return;
     var dateKey = getDateKey(state.selectedDate);
     var ev = state.events[dateKey];
     if (!ev || !ev.bracketSnapshot) return;
@@ -1622,14 +1624,34 @@
     var s = resolveRef(src);
     var d = resolveRef(dst);
     if (!s || !d) return;
+    // 같은 위치면 무시
+    if (s.arr === d.arr && s.idx === d.idx) return;
     var tmp = s.arr[s.idx];
     s.arr[s.idx] = d.arr[d.idx];
     d.arr[d.idx] = tmp;
+    // 중복 방지: 교체 후 해당 라운드에 동일 선수가 여러 번 등장하면 롤백
+    var game = ev.bracketSnapshot.find(function (g) { return g.gameIndex === src.gameIndex; });
+    if (game) {
+      var seen = {};
+      var hasDup = false;
+      var allIds = (game.waiting || []).slice();
+      (game.matches || []).forEach(function (m) {
+        allIds = allIds.concat(m.team1 || []).concat(m.team2 || []);
+      });
+      allIds.forEach(function (id) {
+        if (seen[id]) hasDup = true;
+        seen[id] = true;
+      });
+      if (hasDup) {
+        // 롤백
+        var rollback = d.arr[d.idx];
+        d.arr[d.idx] = s.arr[s.idx];
+        s.arr[s.idx] = rollback;
+        return;
+      }
+    }
     // 교체된 라운드의 경기 결과 선택 초기화
-    var affected = {};
-    affected[src.gameIndex] = true;
-    affected[dst.gameIndex] = true;
-    ev.matchResults = (ev.matchResults || []).filter(function (r) { return !affected[r.gameIndex]; });
+    ev.matchResults = (ev.matchResults || []).filter(function (r) { return r.gameIndex !== src.gameIndex; });
     saveState();
     renderBracket();
   }
@@ -1745,16 +1767,31 @@
       }
 
       // 플레이어 칩 생성 헬퍼 (편집 모드 전용)
-      function makePlayerChip(userId, ref) {
+      // 해당 매치에 승자가 이미 선택돼 있는지 확인
+      function matchHasWinner(gameIndex, matchIdx) {
+        return (ev.matchResults || []).some(function (r) {
+          return r.gameIndex === gameIndex && r.matchIdx === matchIdx &&
+                 (r.winner === 0 || r.winner === 1 || r.winner === 2);
+        });
+      }
+
+      // locked: 승자가 기록된 매치의 선수 → 이동 불가
+      function makePlayerChip(userId, ref, locked) {
         var chip = document.createElement('span');
-        chip.className = 'player-chip';
+        chip.className = 'player-chip' + (locked ? ' locked' : '');
         chip.textContent = userById[userId] ? userById[userId].name : userId;
+        if (locked) {
+          chip.title = '승패가 기록된 경기는 수정할 수 없습니다';
+          return chip;
+        }
         chip.draggable = true;
         var rk = refKey(ref);
         if (bracketSelectedPlayer && refKey(bracketSelectedPlayer) === rk) {
           chip.classList.add('selected');
         }
         chip.addEventListener('dragstart', function (e) {
+          // 드래그 시작 시 클릭 선택 해제
+          bracketSelectedPlayer = null;
           e.dataTransfer.setData('text/plain', JSON.stringify(ref));
           e.dataTransfer.effectAllowed = 'move';
           setTimeout(function () { chip.classList.add('dragging'); }, 0);
@@ -1778,11 +1815,18 @@
           chip.classList.remove('drag-over');
           try {
             var srcRef = JSON.parse(e.dataTransfer.getData('text/plain'));
-            if (refKey(srcRef) !== rk) { swapBracketPlayers(srcRef, ref); }
+            // 같은 라운드 내에서만 이동 허용, 출발지 매치 잠금 여부 확인
+            if (refKey(srcRef) === rk) return;
+            if (srcRef.gameIndex !== ref.gameIndex) return;
+            var srcLocked = srcRef.location === 'team' && matchHasWinner(srcRef.gameIndex, srcRef.matchIdx);
+            if (srcLocked) return;
+            bracketSelectedPlayer = null;
+            swapBracketPlayers(srcRef, ref);
           } catch (ex) {}
         });
         chip.addEventListener('click', function (e) {
           e.stopPropagation();
+          // 같은 칩 재클릭 → 선택 해제
           if (bracketSelectedPlayer && refKey(bracketSelectedPlayer) === rk) {
             bracketSelectedPlayer = null;
             renderBracket();
@@ -1791,6 +1835,15 @@
           if (bracketSelectedPlayer) {
             var src = bracketSelectedPlayer;
             bracketSelectedPlayer = null;
+            // 다른 라운드면 이쪽 칩으로 선택 교체
+            if (src.gameIndex !== ref.gameIndex) {
+              bracketSelectedPlayer = ref;
+              renderBracket();
+              return;
+            }
+            // 출발지 매치 잠금 여부 확인
+            var srcLocked2 = src.location === 'team' && matchHasWinner(src.gameIndex, src.matchIdx);
+            if (srcLocked2) { renderBracket(); return; }
             swapBracketPlayers(src, ref);
             return;
           }
@@ -1845,8 +1898,9 @@
           box1.appendChild(lbl1);
           var membersDiv1 = document.createElement('div');
           membersDiv1.className = 'team-members-edit';
+          var t1Locked = matchHasWinner(b.gameIndex, mi);
           match.team1.forEach(function (uid, pi) {
-            membersDiv1.appendChild(makePlayerChip(uid, { gameIndex: b.gameIndex, location: 'team', matchIdx: mi, teamKey: 'team1', playerIdx: pi }));
+            membersDiv1.appendChild(makePlayerChip(uid, { gameIndex: b.gameIndex, location: 'team', matchIdx: mi, teamKey: 'team1', playerIdx: pi }, t1Locked));
           });
           box1.appendChild(membersDiv1);
         } else {
@@ -1875,8 +1929,9 @@
           box2.appendChild(lbl2);
           var membersDiv2 = document.createElement('div');
           membersDiv2.className = 'team-members-edit';
+          var t2Locked = matchHasWinner(b.gameIndex, mi);
           match.team2.forEach(function (uid, pi) {
-            membersDiv2.appendChild(makePlayerChip(uid, { gameIndex: b.gameIndex, location: 'team', matchIdx: mi, teamKey: 'team2', playerIdx: pi }));
+            membersDiv2.appendChild(makePlayerChip(uid, { gameIndex: b.gameIndex, location: 'team', matchIdx: mi, teamKey: 'team2', playerIdx: pi }, t2Locked));
           });
           box2.appendChild(membersDiv2);
         } else {
@@ -1939,7 +1994,7 @@
           waitLabel.style.color = 'var(--text-muted)';
           waitDiv.appendChild(waitLabel);
           b.waiting.forEach(function (uid, pi) {
-            waitDiv.appendChild(makePlayerChip(uid, { gameIndex: b.gameIndex, location: 'waiting', playerIdx: pi }));
+            waitDiv.appendChild(makePlayerChip(uid, { gameIndex: b.gameIndex, location: 'waiting', playerIdx: pi }, false));
           });
         } else {
           waitDiv.innerHTML = '대기: ' + b.waiting.map(function (id) { return userById[id] ? userById[id].name : id; }).join(', ');

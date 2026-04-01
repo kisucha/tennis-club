@@ -742,6 +742,14 @@ body {
   opacity: 0.45;
 }
 
+.player-chip.locked {
+  background: #f0f0f0;
+  color: #aaa;
+  border-color: transparent;
+  cursor: not-allowed;
+  opacity: 0.75;
+}
+
 .team-members-edit {
   display: flex;
   flex-wrap: wrap;
