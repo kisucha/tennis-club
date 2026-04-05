@@ -1589,7 +1589,10 @@
         btnGoBracket.disabled = !hasBracket;
         btnGoBracket.onclick = hasBracket ? function () { showScreen('screen-bracket'); renderBracket(); } : function () {};
       } else {
-        btnGoBracket.textContent = '대진표 작성';
+        // 대진표가 이미 존재하고 참여자 변동 없으면 '대진표 보기', 아니면 '대진표 작성'
+        var hasBracketToday = ev.bracketSnapshot && ev.bracketSnapshot.length > 0;
+        var unchanged = hasBracketToday && participationUnchanged(ev);
+        btnGoBracket.textContent = unchanged ? '대진표 보기' : '대진표 작성';
         btnGoBracket.disabled = false;
         btnGoBracket.onclick = null;
       }
@@ -3125,12 +3128,20 @@
       if (!dateKey) return;
       ensureEvent(dateKey);
       var ev = state.events[dateKey];
+      // 과거 날짜이면 그냥 보기
       if (isPastDate(dateKey)) {
         showScreen('screen-bracket');
         renderBracket();
         return;
       }
-      // 대진표 작성 시 관리자 암호 확인 (암호가 맞을 때만 작성 후 해당 페이지로 이동)
+      // 대진표가 이미 존재하고 참여자 변동 없으면 패스워드 없이 보기만
+      var hasBracket = ev.bracketSnapshot && ev.bracketSnapshot.length > 0;
+      if (hasBracket && participationUnchanged(ev)) {
+        showScreen('screen-bracket');
+        renderBracket();
+        return;
+      }
+      // 대진표 새로 작성 시 관리자 암호 확인
       var inputPassword = prompt('대진표 작성을 위해 관리자 암호를 입력하세요.');
       if (inputPassword === null) return; // 취소
       var adminPassword = state.memberPassword || '1234';
